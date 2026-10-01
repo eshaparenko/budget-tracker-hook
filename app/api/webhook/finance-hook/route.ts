@@ -30,8 +30,11 @@ export async function POST(request: Request) {
         const categories = ["Дім", "Одяг", "Авто", "Їжа й хозяйство", "Освіта", "Паливо", "Комуналка", "Розваги", "Підписки", "Здоров'я", "Інше"];
         // Отримуємо поточну дату у форматі DD.MM.YYYY
         const currentDate = new Date().toLocaleDateString('uk-UA');
+
+        const sanitizedBody = body.replace(/[\r\n]+/g, " ").replace(/"/g, "'");
+
         const prompt = `
-          Проаналізуй текст транзакції: "${body}"
+          Проаналізуй текст транзакції: "${sanitizedBody}"
           Витягни дані у JSON:
           {
             "category": "одна з: ${categories.join(', ')}",
