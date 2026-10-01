@@ -18,9 +18,21 @@ export async function POST(request: Request) {
         if (request.headers.get('x-api-key') !== process.env.WEBHOOK_SECRET) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
+        const rawText = await request.text();
+        let bodyText = rawText;
+        let appName = "Unknown";
 
-        const { app, body } = await request.json();
-        if (!body) return NextResponse.json({ error: 'No body' }, { status: 400 });
+        // Безпечний парсинг: якщо JSON зламався через лапки чи спецсимволи всередині сповіщення
+        try {
+            const parsedData = JSON.parse(rawText);
+            appName = parsedData.app || "Unknown";
+            bodyText = parsedData.body || rawText;
+        } catch (jsonError) {
+            // Якщо JSON невалідний, використовуємо весь сирий текст як тіло сповіщення
+            bodyText = rawText;
+        }
+        if (!bodyText) return NextResponse.json({ error: 'No body' }, { status: 400 });
+
 
         // 2. Аналіз через Gemini
         const model = genAI.getGenerativeModel({
@@ -32,7 +44,7 @@ export async function POST(request: Request) {
         const currentDate = new Date().toLocaleDateString('uk-UA');
 
         // 2. Очищаємо текст від керуючих символів, які ламають JSON (переноси рядків, табуляція тощо)
-        const sanitizedText = body
+        const sanitizedText = bodyText
             .replace(/[\u0000-\u001F\u007F-\u009F]/g, "") // видаляємо невидимі управляючі символи
             .replace(/\n/g, " ")                           // переноси рядків замінюємо на пробіл
             .replace(/\r/g, "");
@@ -63,7 +75,7 @@ export async function POST(request: Request) {
             range: 'Transactions!A:F',
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[currentDate, parsedData.category, parsedData.amount, parsedData.currency, parsedData.merchant, app]],
+                values: [[currentDate, parsedData.category, parsedData.amount, parsedData.currency, parsedData.merchant, appName]],
             },
         });
 
