@@ -31,10 +31,14 @@ export async function POST(request: Request) {
         // Отримуємо поточну дату у форматі DD.MM.YYYY
         const currentDate = new Date().toLocaleDateString('uk-UA');
 
-        const sanitizedBody = body.replace(/[\r\n]+/g, " ").replace(/"/g, "'");
+        // 2. Очищаємо текст від керуючих символів, які ламають JSON (переноси рядків, табуляція тощо)
+        const sanitizedText = body
+            .replace(/[\u0000-\u001F\u007F-\u009F]/g, "") // видаляємо невидимі управляючі символи
+            .replace(/\n/g, " ")                           // переноси рядків замінюємо на пробіл
+            .replace(/\r/g, "");
 
         const prompt = `
-          Проаналізуй текст транзакції: "${sanitizedBody}"
+          Проаналізуй текст транзакції: "${sanitizedText}"
           Витягни дані у JSON:
           {
             "category": "одна з: ${categories.join(', ')}",
