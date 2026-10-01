@@ -14,26 +14,29 @@ const sheets = google.sheets({ version: 'v4', auth });
 
 export async function POST(request: Request) {
     try {
-        // 1. Перевірка доступу
-        if (request.headers.get('x-api-key') !== process.env.WEBHOOK_SECRET) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
         const rawText = await request.text();
-        let bodyText = rawText;
-        let appName = "Unknown";
 
-        // Безпечний парсинг: якщо JSON зламався через лапки чи спецсимволи всередині сповіщення
+        let parsedData;
         try {
-            const parsedData = JSON.parse(rawText);
-            appName = parsedData.app || "Unknown";
-            bodyText = parsedData.body || rawText;
-        } catch (jsonError) {
-            // Якщо JSON невалідний, використовуємо весь сирий текст як тіло сповіщення
-            bodyText = rawText;
+            parsedData = JSON.parse(rawText);
+        } catch (err: any) {
+            console.error("--- JSON PARSE ERROR ---");
+            console.error("Error message:", err.message);
+            console.error("Raw text received:", JSON.stringify(rawText));
+
+            return NextResponse.json({
+                error: "Invalid JSON format",
+                details: err.message,
+                receivedText: rawText
+            }, {status: 400});
         }
-        if (!bodyText) return NextResponse.json({ error: 'No body' }, { status: 400 });
 
+        const appName = parsedData.app || "Unknown";
+        const bodyText = parsedData.body || rawText;
 
+        if (!bodyText) {
+            return NextResponse.json({error: "No body provided"}, {status: 400});
+        }
         // 2. Аналіз через Gemini
         const model = genAI.getGenerativeModel({
             model: 'gemini-flash-lite-latest' ,
@@ -61,7 +64,6 @@ export async function POST(request: Request) {
         `;
 
         const result = await model.generateContent(prompt);
-        let parsedData;
         try {
             parsedData = JSON.parse(result.response.text());
         } catch (parseError) {
