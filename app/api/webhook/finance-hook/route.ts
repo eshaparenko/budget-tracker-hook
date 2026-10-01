@@ -16,26 +16,18 @@ export async function POST(request: Request) {
     try {
         const rawText = await request.text();
 
-        let parsedData;
-        try {
-            parsedData = JSON.parse(rawText);
-        } catch (err: any) {
-            console.error("--- JSON PARSE ERROR ---");
-            console.error("Error message:", err.message);
-            console.error("Raw text received:", JSON.stringify(rawText));
+        // Замінюємо реальні переноси рядків та табуляцію на пробіли у всьому сирому тексті перед парсингом
+        const sanitizedRaw = rawText
+            .replace(/[\r\n]+/g, " ")  // замінюємо будь-які переноси рядків на пробіл
+            .replace(/\t/g, " ");
 
-            return NextResponse.json({
-                error: "Invalid JSON format",
-                details: err.message,
-                receivedText: rawText
-            }, {status: 400});
-        }
+        let parsedData = JSON.parse(sanitizedRaw);
 
         const appName = parsedData.app || "Unknown";
-        const bodyText = parsedData.body || rawText;
+        const bodyText = parsedData.body || "";
 
         if (!bodyText) {
-            return NextResponse.json({error: "No body provided"}, {status: 400});
+            return NextResponse.json({ error: "No body provided" }, { status: 400 });
         }
         // 2. Аналіз через Gemini
         const model = genAI.getGenerativeModel({
