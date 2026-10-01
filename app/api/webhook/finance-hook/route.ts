@@ -23,7 +23,9 @@ export async function POST(request: Request) {
         if (!body) return NextResponse.json({ error: 'No body' }, { status: 400 });
 
         // 2. Аналіз через Gemini
-        const model = genAI.getGenerativeModel({ model: 'gemini-flash-lite-latest' });
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-flash-lite-latest' ,
+            generationConfig: { responseMimeType: "application/json" }});
         // Категорії підлаштовані під ваш звичний флоу
         const categories = ["Дім", "Одяг", "Авто", "Їжа й хозяйство", "Освіта", "Паливо", "Комуналка", "Розваги", "Підписки", "Здоров'я", "Інше"];
         // Отримуємо поточну дату у форматі DD.MM.YYYY
@@ -40,7 +42,13 @@ export async function POST(request: Request) {
         `;
 
         const result = await model.generateContent(prompt);
-        const parsedData = JSON.parse(result.response.text().replace(/```json|```/g, '').trim());
+        let parsedData;
+        try {
+            parsedData = JSON.parse(result.response.text());
+        } catch (parseError) {
+            console.error("Помилка парсингу відповіді Gemini:", result.response.text());
+            return NextResponse.json({ error: 'Failed to parse AI response' }, { status: 500 });
+        }
 
         // 3. Запис у Google Sheets
         await sheets.spreadsheets.values.append({
