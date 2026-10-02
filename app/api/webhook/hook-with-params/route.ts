@@ -13,16 +13,6 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: 'v4', auth });
 
 export async function POST(request: Request) {
-    // 1. Читаємо весь запит як сирий текст ДО будь-яких парсерів
-    const rawText = await request.text();
-    const url = request.url;
-    const contentType = request.headers.get("content-type");
-
-    console.log("=== DEBUG INCOMING REQUEST ===");
-    console.log("URL:", url);
-    console.log("Content-Type:", contentType);
-    console.log("Raw Text Body:", JSON.stringify(rawText));
-    console.log("==============================");
     try {
         const url = new URL(request.url);
 
@@ -32,32 +22,7 @@ export async function POST(request: Request) {
 
         // 2. Якщо в URL параметрів немає, перевіряємо тіло запиту (Body)
         if (!bodyText) {
-            const rawText = await request.text();
-
-            try {
-                // Пробуємо як URL-encoded форму
-                const params = new URLSearchParams(rawText);
-                appName = appName || params.get("app") || "Unknown";
-                bodyText = params.get("body");
-
-                // Якщо і там немає, пробуємо як JSON
-                if (!bodyText && rawText.startsWith("{")) {
-                    const parsed = JSON.parse(rawText);
-                    appName = appName || parsed.app || "Unknown";
-                    bodyText = parsed.body;
-                }
-
-                // Якщо нічого не підійшло, беремо весь сирий текст
-                if (!bodyText) {
-                    bodyText = rawText;
-                }
-            } catch (e) {
-                bodyText = rawText;
-            }
-        }
-
-        if (!bodyText) {
-            return NextResponse.json({ error: "No body provided" }, { status: 400 });
+            return NextResponse.json({ error: "No body in URL parameters" }, { status: 400 });
         }
 
         // Очищаємо текст від переносів рядків та зайвих символів для Gemini
