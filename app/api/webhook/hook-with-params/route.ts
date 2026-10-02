@@ -14,21 +14,50 @@ const sheets = google.sheets({ version: 'v4', auth });
 
 export async function POST(request: Request) {
     try {
-        const rawText = await request.text();
+        const url = new URL(request.url);
 
-        // Парсимо як URL-encoded форму (передану з MacroDroid)
-        const params = new URLSearchParams(rawText);
-        const appName = params.get("app") || "Unknown";
-        const bodyText = params.get("body") || rawText;
+        // 1. Спочатку пробуємо забрати параметри з URL (якщо MacroDroid передає їх у вигляді ?app=...&body=...)
+        let appName = url.searchParams.get("app");
+        let bodyText = url.searchParams.get("body");
+
+        // 2. Якщо в URL параметрів немає, перевіряємо тіло запиту (Body)
+        if (!bodyText) {
+            const rawText = await request.text();
+
+            try {
+                // Пробуємо як URL-encoded форму
+                const params = new URLSearchParams(rawText);
+                appName = appName || params.get("app") || "Unknown";
+                bodyText = params.get("body");
+
+                // Якщо і там немає, пробуємо як JSON
+                if (!bodyText && rawText.startsWith("{")) {
+                    const parsed = JSON.parse(rawText);
+                    appName = appName || parsed.app || "Unknown";
+                    bodyText = parsed.body;
+                }
+
+                // Якщо нічого не підійшло, беремо весь сирий текст
+                if (!bodyText) {
+                    bodyText = rawText;
+                }
+            } catch (e) {
+                bodyText = rawText;
+            }
+        }
 
         if (!bodyText) {
             return NextResponse.json({ error: "No body provided" }, { status: 400 });
         }
 
-        // Очищаємо текст для безпечної передачі в Gemini
+        // Очищаємо текст від переносів рядків та зайвих символів для Gemini
         const sanitizedBody = bodyText
             .replace(/[\r\n]+/g, " ")
             .trim();
+
+        console.log("Parsed App:", appName);
+        console.log("Parsed Body:", sanitizedBody);
+
         // 2. Аналіз через Gemini
         const model = genAI.getGenerativeModel({
             model: 'gemini-flash-lite-latest' ,
