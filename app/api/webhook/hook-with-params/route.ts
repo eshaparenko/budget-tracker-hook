@@ -13,6 +13,16 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: 'v4', auth });
 
 export async function POST(request: Request) {
+    // 1. Читаємо весь запит як сирий текст ДО будь-яких парсерів
+    const rawText = await request.text();
+    const url = request.url;
+    const contentType = request.headers.get("content-type");
+
+    console.log("=== DEBUG INCOMING REQUEST ===");
+    console.log("URL:", url);
+    console.log("Content-Type:", contentType);
+    console.log("Raw Text Body:", JSON.stringify(rawText));
+    console.log("==============================");
     try {
         const url = new URL(request.url);
 
