@@ -4,6 +4,7 @@
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { buildAnalysisPrompt } from '@/lib/config/prompts';
 import { ParsedTransaction } from '../types';
 
 const TRANSACTION_CATEGORIES = [
@@ -82,34 +83,7 @@ export class TransactionAnalyzer {
   }
 
   private buildPrompt(text: string): string {
-    const categoriesStr = TRANSACTION_CATEGORIES.join(', ');
-
-    return `You are a financial transaction analyzer. Your task is to extract structured data from transaction text.
-
-IMPORTANT: Determine if this is a REAL FINANCIAL TRANSACTION or just informational/reference text.
-
-Transaction text: "${text}"
-
-Extract ONLY the following JSON (no markdown, no code blocks, no extra text):
-{
-  "isTransaction": true/false (is this a real financial transaction or just info?),
-  "category": "select ONE from: ${categoriesStr}, or empty string if not a transaction",
-  "amount": number or 0 if not found (extract numeric value only),
-  "currency": "ISO 4217 currency code (UAH, USD, EUR, GBP, ALL, HRK, RUB, etc.) or empty string if not found",
-  "merchant": "business/service name or empty string",
-  "transactionType": "Payment, Transfer, Refund, Withdrawal, Deposit, or Other",
-  "details": "any useful info like card/reference or empty string"
-}
-
-GUIDELINES:
-- isTransaction = true ONLY if: someone paid, received money, transferred funds, made a purchase, invoice for payment, or withdrawal
-- isTransaction = false if: pricing info, tariffs, menus, FAQ, rules, shipping rates without purchase context
-- Extract currency code from ANY format: "5000 лек" → "ALL", "1500 грн" → "UAH", "$500" → "USD"
-- If you see a currency word/symbol, convert it to ISO 4217 code (e.g., лек=ALL, грн=UAH, евро=EUR, долар=USD, дин=RSD, etc.)
-- If amount contains text like "1500 грн", extract ONLY the number: 1500
-- If no merchant found, return empty string, NOT null
-- category should be one of the provided options (or empty if not a transaction)
-- Do not include any text before or after JSON`;
+    return buildAnalysisPrompt(text, TRANSACTION_CATEGORIES);
   }
 
   private parseGeminiResponse(responseText: string): ParsedTransaction {
