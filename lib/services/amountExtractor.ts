@@ -16,10 +16,9 @@ export class AmountExtractor {
   extract(text: string): ExtractedAmount | null {
     this.debugLog = [];
 
-    // Patterns for different currency formats (in priority order)
+    // Only extract amounts with currency SYMBOLS (most reliable)
+    // Named currencies like "лек", "дин", etc. are better handled by Gemini
     const patterns = [
-      // Main pattern: "1500 грн", "1,500.50 грн", "500 UAH", etc
-      /(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(грн|грнс|uah|usd|eur|gbp|руб)/gi,
       // With symbols: "$500", "$1,500.50", "€1000", "£100"
       /[$€£₽]\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)/g,
       // Amount after symbol: "500$", "1,500.50$", "1000€"
@@ -35,7 +34,7 @@ export class AmountExtractor {
       let match;
       while ((match = pattern.exec(text)) !== null) {
         const amountStr = match[1];
-        let currencyPart = match[2] || this.extractCurrency(match[0]);
+        const currencyPart = this.extractCurrency(match[0]);
         
         if (!amountStr) continue;
         
@@ -62,7 +61,7 @@ export class AmountExtractor {
           if (!highestAmount || amount > highestAmount.amount) {
             highestAmount = {
               amount,
-              currency: this.normalizeCurrency(currencyPart),
+              currency: currencyPart,
               rawText: match[0].trim(),
             };
           }
@@ -75,34 +74,27 @@ export class AmountExtractor {
         `✓ Selected amount: ${highestAmount.amount} ${highestAmount.currency}`
       );
     } else {
-      this.debugLog.push('❌ No amount found');
+      this.debugLog.push('⚠ No amount with symbols found - will delegate to Gemini');
     }
 
     return highestAmount;
   }
 
   private extractCurrency(text: string): string {
-    const currencyPatterns: Record<string, string> = {
-      грн: 'UAH',
-      грнс: 'UAH',
-      uah: 'UAH',
-      usd: 'USD',
-      eur: 'EUR',
-      gbp: 'GBP',
-      руб: 'RUB',
+    const symbolToCurrency: Record<string, string> = {
       '$': 'USD',
       '€': 'EUR',
       '£': 'GBP',
       '₽': 'RUB',
     };
 
-    for (const [pattern, currency] of Object.entries(currencyPatterns)) {
-      if (text.toLowerCase().includes(pattern)) {
+    for (const [symbol, currency] of Object.entries(symbolToCurrency)) {
+      if (text.includes(symbol)) {
         return currency;
       }
     }
 
-    return 'UAH'; // Default for Ukrainian context
+    return 'USD'; // Default when symbol found
   }
 
   private normalizeCurrency(currency: string): string {
