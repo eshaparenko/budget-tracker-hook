@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { RequestParser } from '@/lib/services/requestParser';
 import { TransactionAnalyzer } from '@/lib/services/transactionAnalyzer';
 import { TransactionTypeDetector } from '@/lib/services/transactionTypeDetector';
+import { TransactionIntentDetector } from '@/lib/services/transactionIntentDetector';
 import { AmountExtractor } from '@/lib/services/amountExtractor';
 import { SheetsRepository } from '@/lib/repositories/sheetsRepository';
 import { getEnvironmentConfig } from '@/lib/config/environment';
@@ -98,6 +99,27 @@ export async function POST(request: Request) {
         ...(debugEnabled && { debugLog }),
       }, { status: 400 });
     }
+
+    // Step 2.3: Check if message is actually a transaction or just informational
+    debugLog.push('→ Step 2.3: Checking transaction intent');
+    const intentDetector = new TransactionIntentDetector();
+    const intentResult = intentDetector.detect(webhookRequest.body);
+    debugLog.push(...intentDetector.getDebugLog());
+    
+    if (!intentResult.isTransaction) {
+      debugLog.push(`⚠ Message is not a transaction: ${intentResult.reason}`);
+      logger.log('Non-transaction message rejected', {
+        reason: intentResult.reason,
+        confidence: intentResult.confidence,
+      });
+      return NextResponse.json({
+        success: false,
+        error: 'Message is not a financial transaction',
+        reason: intentResult.reason,
+        ...(debugEnabled && { debugLog }),
+      }, { status: 400 });
+    }
+
     // Step 2.5: Pre-extract amount (improves Gemini accuracy)
     debugLog.push('→ Step 2.5: Pre-extracting amount from text');
     const amountExtractor = new AmountExtractor();
