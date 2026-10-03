@@ -69,7 +69,7 @@ export function validateAndSanitize(
   sanitized = sanitized.replace(/\s+/g, ' ').trim();
 
   if (errors.length > 0) {
-    return { isValid: false, errors };
+    return { isValid: false, errors, sanitized };
   }
 
   return { isValid: true, errors: [], sanitized };
