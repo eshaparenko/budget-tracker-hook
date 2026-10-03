@@ -1,179 +1,212 @@
+/**
+ * Webhook Handler - Refactored
+ * Handles financial transaction webhooks with AI-powered categorization
+ */
+
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { google } from 'googleapis';
+import { RequestParser } from '@/lib/services/requestParser';
+import { TransactionAnalyzer } from '@/lib/services/transactionAnalyzer';
+import { SheetsRepository } from '@/lib/repositories/sheetsRepository';
+import { getEnvironmentConfig } from '@/lib/config/environment';
+import { Logger, ErrorMapper, ResponseBuilder, Timer } from '@/lib/utils/errorHandler';
+import { validateAndSanitize, validateTransactionBody } from '@/lib/utils/validation';
+import { Transaction } from '@/lib/types';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-const auth = new google.auth.GoogleAuth({
-    credentials: {
-        client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
-const sheets = google.sheets({ version: 'v4', auth });
-
+/**
+ * POST /api/webhook/hook-with-params
+ * 
+ * Accepts financial transaction data, analyzes it with AI, and stores in Google Sheets
+ * 
+ * Query Parameters:
+ * - app: Source application (e.g., "Gmail", "Ukrsib")
+ * - body: Transaction text to analyze
+ * 
+ * Request Body:
+ * - Empty JSON object {} required (for proper content-type handling)
+ * 
+ * Example:
+ * POST /api/webhook/hook-with-params?app=Gmail&body=Payment%20150%20UAH%20to%20Starbucks
+ */
 export async function POST(request: Request) {
-    const debugLog: string[] = [];
-    
+  const timer = new Timer();
+  const logger = new Logger();
+  const debugLog: string[] = [];
+
+  try {
+    debugLog.push('=== Webhook Handler Started ===');
+    logger.log('Webhook request received');
+
+    // Load configuration
+    let config;
     try {
-        debugLog.push("=== POST Request Started ===");
-        debugLog.push(`URL: ${request.url}`);
-        debugLog.push(`Content-Type: ${request.headers.get('content-type') || 'not set'}`);
-        
-        const url = new URL(request.url);
-        debugLog.push(`Full URL: ${url.toString()}`);
-        debugLog.push(`Search params: ${url.search}`);
-
-        // 1. Extract URL parameters
-        const app = url.searchParams.get("app") || "Gmail";
-        const bodyParam = url.searchParams.get("body");
-        
-        debugLog.push(`URL param 'app': ${app}`);
-        debugLog.push(`URL param 'body': ${bodyParam ? `"${bodyParam.substring(0, 50)}..."` : '(empty)'}`);
-
-        // 2. Use URL body parameter - it's always the source of truth
-        let bodyText: string | null = bodyParam;
-        
-        // 3. Only check request body if URL param is missing
-        if (!bodyText || bodyText.trim() === '') {
-            debugLog.push("No 'body' URL param, checking request body...");
-            try {
-                const contentType = request.headers.get('content-type') || '';
-                const rawBody = await request.text();
-                debugLog.push(`Request body length: ${rawBody.length}`);
-                
-                if (rawBody && rawBody.trim() && rawBody.trim() !== '{}' && rawBody.trim() !== '[]') {
-                    debugLog.push(`Request body content: ${rawBody.substring(0, 100)}`);
-                    try {
-                        const json = JSON.parse(rawBody);
-                        const extracted = json.body || json.message || json.text || JSON.stringify(json);
-                        if (typeof extracted === 'string') {
-                            bodyText = extracted;
-                            debugLog.push(`Extracted from JSON: ${bodyText.substring(0, 50)}`);
-                        }
-                    } catch {
-                        bodyText = rawBody;
-                        debugLog.push(`Parsed as plain text`);
-                    }
-                } else {
-                    debugLog.push(`Request body is empty or just {}`);
-                }
-            } catch (e) {
-                debugLog.push(`Error reading body: ${e instanceof Error ? e.message : 'unknown'}`);
-            }
-        }
-
-        // 4. Final validation
-        if (!bodyText || bodyText.trim() === '') {
-            debugLog.push("❌ ERROR: No body content available");
-            return NextResponse.json({
-                error: "No body content",
-                debugLog,
-                usage: "POST /api/webhook/hook-with-params?app=Gmail&body=your%20text%20here"
-            }, { status: 400 });
-        }
-
-        debugLog.push(`✓ Body received: ${bodyText.length} chars`);
-        debugLog.push(`✓ App: ${app}`);
-
-        // 5. Sanitize for Gemini
-        const sanitized = bodyText
-            .replace(/[\r\n]+/g, " ")
-            .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
-            .trim();
-
-        // 6. Call Gemini
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-flash-lite-latest',
-            generationConfig: { responseMimeType: "application/json" }
-        });
-
-        const categories = ["Дім", "Одяг", "Авто", "Їжа й хозяйство", "Освіта", "Паливо", "Комуналка", "Розваги", "Підписки", "Здоров'я", "Інше"];
-        
-        const prompt = `Проаналізуй текст транзакції: "${sanitized}"
-Витягни дані у JSON:
-{
-  "category": "одна з: ${categories.join(', ')}",
-  "amount": число,
-  "currency": "валюта (UAH, USD, EUR тощо)",
-  "merchant": "назва закладу чи сервісу"
-}`;
-
-        debugLog.push("→ Calling Gemini...");
-        const result = await model.generateContent(prompt);
-        const geminiText = result.response.text();
-        debugLog.push(`← Gemini response: ${geminiText.substring(0, 100)}`);
-
-        let parsedData;
-        try {
-            parsedData = JSON.parse(geminiText);
-            debugLog.push(`✓ Parsed Gemini JSON`);
-        } catch (e) {
-            debugLog.push(`❌ Failed to parse Gemini response: ${e instanceof Error ? e.message : 'unknown'}`);
-            return NextResponse.json({
-                error: "Gemini response parsing failed",
-                debugLog,
-                geminiRaw: geminiText
-            }, { status: 500 });
-        }
-
-        // 7. Write to Sheets
-        const currentDate = new Date().toLocaleDateString('uk-UA');
-        debugLog.push("→ Writing to Google Sheets...");
-        
-        await sheets.spreadsheets.values.append({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Transactions!A:F',
-            valueInputOption: 'USER_ENTERED',
-            requestBody: {
-                values: [[currentDate, parsedData.category, parsedData.amount, parsedData.currency, parsedData.merchant, app]],
-            },
-        });
-        
-        debugLog.push("✓ Wrote to Google Sheets");
-
-        return NextResponse.json({
-            success: true,
-            parsedData,
-            debugLog
-        });
-
+      config = getEnvironmentConfig();
+      debugLog.push('✓ Environment configuration loaded');
     } catch (error) {
-        debugLog.push(`❌ ERROR: ${error instanceof Error ? error.message : String(error)}`);
-        console.error('Webhook error:', error);
-        
-        return NextResponse.json({
-            error: 'Server error',
-            debugLog
-        }, { status: 500 });
+      debugLog.push(
+        `❌ Configuration error: ${error instanceof Error ? error.message : 'unknown'}`
+      );
+      return ResponseBuilder.error(
+        'Server configuration error',
+        500,
+        debugLog
+      );
     }
+
+    // Step 1: Parse request
+    debugLog.push('→ Step 1: Parsing request');
+    let webhookRequest;
+    try {
+      const parser = new RequestParser();
+      webhookRequest = await parser.parse(request);
+      debugLog.push(...parser.getDebugLog());
+      logger.log('Request parsed successfully', {
+        app: webhookRequest.app,
+        bodyLength: webhookRequest.body.length,
+      });
+    } catch (error) {
+      debugLog.push(
+        `❌ Parse error: ${error instanceof Error ? error.message : 'unknown'}`
+      );
+      logger.error('Request parsing failed', error);
+      return ResponseBuilder.error(
+        'Failed to parse request',
+        400,
+        debugLog
+      );
+    }
+
+    // Step 2: Validate body content
+    debugLog.push('→ Step 2: Validating content');
+    const validation = validateTransactionBody(webhookRequest.body);
+    if (!validation.isValid) {
+      debugLog.push(`❌ Validation errors: ${validation.errors.join(', ')}`);
+      logger.error('Body validation failed', { errors: validation.errors });
+      return ResponseBuilder.error(
+        'Invalid transaction body',
+        400,
+        debugLog
+      );
+    }
+    debugLog.push('✓ Body content validated');
+
+    // Step 3: Analyze transaction
+    debugLog.push('→ Step 3: Analyzing transaction with AI');
+    let parsedData;
+    try {
+      const analyzer = new TransactionAnalyzer(config.geminiApiKey);
+      parsedData = await analyzer.analyze(validation.sanitized || webhookRequest.body);
+      debugLog.push(...analyzer.getDebugLog());
+      logger.log('Transaction analyzed', {
+        category: parsedData.category,
+        amount: parsedData.amount,
+        merchant: parsedData.merchant,
+      });
+    } catch (error) {
+      debugLog.push(
+        `❌ Analysis error: ${error instanceof Error ? error.message : 'unknown'}`
+      );
+      logger.error('Transaction analysis failed', error);
+      return ResponseBuilder.error(
+        'Failed to analyze transaction',
+        500,
+        debugLog
+      );
+    }
+
+    // Step 4: Save to Google Sheets
+    debugLog.push('→ Step 4: Saving to Google Sheets');
+    try {
+      const repository = new SheetsRepository(config.googleSheetId);
+      
+      const transaction: Transaction = {
+        date: new Date().toLocaleDateString('uk-UA'),
+        category: parsedData.category,
+        amount: parsedData.amount,
+        currency: parsedData.currency,
+        merchant: parsedData.merchant,
+        source: webhookRequest.app,
+      };
+
+      await repository.appendTransaction(transaction);
+      debugLog.push(...repository.getDebugLog());
+      logger.log('Transaction saved', { source: webhookRequest.app });
+    } catch (error) {
+      debugLog.push(
+        `❌ Save error: ${error instanceof Error ? error.message : 'unknown'}`
+      );
+      logger.error('Failed to save transaction', error);
+      return ResponseBuilder.error(
+        'Failed to save transaction',
+        500,
+        debugLog
+      );
+    }
+
+    // Success response
+    debugLog.push(`✓ Webhook completed in ${timer.elapsedMs()}`);
+    logger.log('Webhook processed successfully', {
+      duration: timer.elapsedMs(),
+    });
+
+    return ResponseBuilder.success(parsedData, debugLog);
+  } catch (error) {
+    debugLog.push(
+      `❌ Unexpected error: ${error instanceof Error ? error.message : 'unknown'}`
+    );
+    logger.error('Webhook failed', error);
+
+    return ResponseBuilder.error(
+      'An unexpected error occurred',
+      500,
+      debugLog
+    );
+  }
 }
 
+/**
+ * GET /api/webhook/hook-with-params
+ * 
+ * Health check - returns available Gemini models
+ */
 export async function GET() {
-    try {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-            return NextResponse.json({ error: 'API key missing' }, { status: 500 });
-        }
+  const debugLog: string[] = [];
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-        const data = await response.json();
+  try {
+    const config = getEnvironmentConfig();
+    debugLog.push('→ Fetching available Gemini models');
 
-        if (!data.models) {
-            return NextResponse.json({ error: 'Failed to fetch models', details: data }, { status: 500 });
-        }
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${config.geminiApiKey}`
+    );
+    const data = await response.json();
 
-        const availableModels = data.models
-            .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
-            .map((m: any) => m.name);
-
-        return NextResponse.json({
-            count: availableModels.length,
-            models: availableModels
-        });
-
-    } catch (error) {
-        console.error('Error fetching models:', error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    if (!data.models) {
+      debugLog.push('❌ No models found in response');
+      return NextResponse.json(
+        { error: 'Failed to fetch models', debugLog },
+        { status: 500 }
+      );
     }
+
+    const availableModels = data.models
+      .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+      .map((m: any) => m.name);
+
+    debugLog.push(`✓ Found ${availableModels.length} available models`);
+
+    return NextResponse.json({
+      health: 'ok',
+      count: availableModels.length,
+      models: availableModels,
+      debugLog,
+    });
+  } catch (error) {
+    debugLog.push(
+      `❌ Error: ${error instanceof Error ? error.message : 'unknown'}`
+    );
+    return NextResponse.json(
+      { error: 'Internal server error', debugLog },
+      { status: 500 }
+    );
+  }
 }
