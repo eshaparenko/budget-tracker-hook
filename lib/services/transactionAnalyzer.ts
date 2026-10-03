@@ -86,11 +86,14 @@ export class TransactionAnalyzer {
 
     return `You are a financial transaction analyzer. Your task is to extract structured data from transaction text.
 
+IMPORTANT: Determine if this is a REAL FINANCIAL TRANSACTION or just informational/reference text.
+
 Transaction text: "${text}"
 
 Extract ONLY the following JSON (no markdown, no code blocks, no extra text):
 {
-  "category": "select ONE from: ${categoriesStr}",
+  "isTransaction": true/false (is this a real financial transaction or just info?),
+  "category": "select ONE from: ${categoriesStr}, or empty string if not a transaction",
   "amount": number or 0 if not found (extract numeric value only),
   "currency": "3-letter code (UAH, USD, EUR, GBP) or empty string",
   "merchant": "business/service name or empty string",
@@ -98,17 +101,32 @@ Extract ONLY the following JSON (no markdown, no code blocks, no extra text):
   "details": "any useful info like card/reference or empty string"
 }
 
-IMPORTANT:
-- Always return valid JSON
+GUIDELINES:
+- isTransaction = true ONLY if: someone paid, received money, transferred funds, made a purchase, invoice for payment, or withdrawal
+- isTransaction = false if: pricing info, tariffs, menus, FAQ, rules, shipping rates without purchase context
 - If amount contains text like "1500 грн", extract ONLY the number: 1500
 - If no merchant found, return empty string, NOT null
-- category should be one of the provided options
+- category should be one of the provided options (or empty if not a transaction)
 - Do not include any text before or after JSON`;
   }
 
   private parseGeminiResponse(responseText: string): ParsedTransaction {
     try {
       const parsed = JSON.parse(responseText);
+
+      // Check if this is actually a transaction
+      if (parsed.isTransaction === false) {
+        this.debugLog.push('⚠ Gemini determined this is not a transaction');
+        // Return a marker that this is not a transaction
+        return {
+          category: 'Інше',
+          amount: 0,
+          currency: '',
+          merchant: '',
+          transactionType: 'Other',
+          details: 'NOT_A_TRANSACTION',
+        } as ParsedTransaction;
+      }
 
       // Validate required fields exist
       if (typeof parsed.category !== 'string') {
