@@ -16,34 +16,43 @@ export class AmountExtractor {
   extract(text: string): ExtractedAmount | null {
     this.debugLog = [];
 
-    // Patterns for different currency formats
+    // Patterns for different currency formats (in priority order)
     const patterns = [
-      // Ukrainian/Russian: "1500 грн", "500 UAH", "1000 uah"
-      /(\d+(?:[.,]\d{1,2})?)\s*(грн|грнс|uah|usd|eur|gbp|uah|руб)/gi,
-      // English: "$500", "€1000"
+      // Main pattern: "1500 грн", "500 UAH", etc with space variations
+      /(\d+(?:[.,]\d{1,2})?)\s*(грн|грнс|uah|usd|eur|gbp|руб)/gi,
+      // With symbols: "$500", "€1000", "£100"
       /[$€£₽]\s*(\d+(?:[.,]\d{1,2})?)/g,
-      // Spaced: "1500 $", "500 USD"
-      /(\d+(?:[.,]\d{1,2})?)\s*[$€£₽usd|eur|gbp]/gi,
-      // Just numbers (fallback for standalone amounts)
-      /(\d+(?:[.,]\d{1,2})?)\s*(?:грн|грнс|uah|usd|eur|gbp|руб)?(?:\s|$)/gi,
+      // Amount after symbol: "500$", "1000€"
+      /(\d+(?:[.,]\d{1,2})?)\s*[$€£₽]/g,
     ];
 
     let highestAmount: ExtractedAmount | null = null;
 
     for (const pattern of patterns) {
-      const matches = text.matchAll(pattern);
-      for (const match of matches) {
-        const amountStr = match[1] || match[0];
-        const currencyPart = match[2] || this.extractCurrency(match[0]);
+      // Reset lastIndex for global patterns
+      pattern.lastIndex = 0;
+      
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        const amountStr = match[1];
+        let currencyPart = match[2] || this.extractCurrency(match[0]);
+        
+        if (!amountStr) continue;
         
         const amount = parseFloat(amountStr.replace(',', '.'));
         
-        if (amount > 0 && amount < 999999) { // Reasonable transaction limits
+        // Exclude dates like "01.10" (day.month pattern)
+        if (amount > 0 && amount < 999999 && amount !== Math.floor(amount) && amount < 32) {
+          this.debugLog.push(`Skipping date-like value: ${amount}`);
+          continue;
+        }
+        
+        if (amount > 0 && amount < 999999) {
           this.debugLog.push(
             `Found amount: ${amount} ${currencyPart} from "${match[0].trim()}"`
           );
           
-          // Keep the highest amount (usually the transaction amount, not a date)
+          // Keep the highest amount (usually the transaction amount)
           if (!highestAmount || amount > highestAmount.amount) {
             highestAmount = {
               amount,
@@ -60,7 +69,7 @@ export class AmountExtractor {
         `✓ Selected amount: ${highestAmount.amount} ${highestAmount.currency}`
       );
     } else {
-      this.debugLog.push('No amount found');
+      this.debugLog.push('❌ No amount found');
     }
 
     return highestAmount;
