@@ -101,6 +101,7 @@ export async function POST(request: Request) {
 
     // Step 3: Analyze transaction
     debugLog.push('→ Step 3: Analyzing transaction with AI');
+    debugLog.push(`Input to Gemini (first 150 chars): ${(validation.sanitized || webhookRequest.body).substring(0, 150)}`);
     let parsedData;
     try {
       const analyzer = new TransactionAnalyzer(config.geminiApiKey);

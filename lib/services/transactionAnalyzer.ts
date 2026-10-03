@@ -84,19 +84,26 @@ export class TransactionAnalyzer {
   private buildPrompt(text: string): string {
     const categoriesStr = TRANSACTION_CATEGORIES.join(', ');
 
-    return `Analyze this transaction text and extract structured data.
+    return `You are a financial transaction analyzer. Your task is to extract structured data from transaction text.
 
-Text: "${text}"
+Transaction text: "${text}"
 
-Extract the following information and return ONLY valid JSON (no markdown, no extra text):
+Extract ONLY the following JSON (no markdown, no code blocks, no extra text):
 {
-  "category": "one of: ${categoriesStr}",
-  "amount": number (0 if not found),
-  "currency": "currency code like UAH, USD, EUR, GBP (or empty string if unknown)",
-  "merchant": "name of the business or service (or empty string if unknown)",
+  "category": "select ONE from: ${categoriesStr}",
+  "amount": number or 0 if not found (extract numeric value only),
+  "currency": "3-letter code (UAH, USD, EUR, GBP) or empty string",
+  "merchant": "business/service name or empty string",
   "transactionType": "Payment, Transfer, Refund, Withdrawal, Deposit, or Other",
-  "details": "any additional data like card number, reference, recipient (or empty string if none)"
-}`;
+  "details": "any useful info like card/reference or empty string"
+}
+
+IMPORTANT:
+- Always return valid JSON
+- If amount contains text like "1500 грн", extract ONLY the number: 1500
+- If no merchant found, return empty string, NOT null
+- category should be one of the provided options
+- Do not include any text before or after JSON`;
   }
 
   private parseGeminiResponse(responseText: string): ParsedTransaction {
