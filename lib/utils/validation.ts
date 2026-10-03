@@ -54,15 +54,15 @@ export function validateAndSanitize(
   // Sanitize the input
   let sanitized = trimmed;
 
-  // Remove null bytes (null injection)
-  sanitized = sanitized.replace(/\x00/g, '');
+  // Remove null bytes (null injection) - replace with space to preserve word separation
+  sanitized = sanitized.replace(/\x00/g, ' ');
 
   // Remove control characters except newlines and tabs
   if (!allowNewlines) {
     sanitized = sanitized.replace(/[\r\n\t]/g, ' ');
   } else {
     // Remove other control characters but keep newlines/tabs
-    sanitized = sanitized.replace(/[\x01-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
+    sanitized = sanitized.replace(/[\x01-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, ' ');
   }
 
   // Normalize whitespace

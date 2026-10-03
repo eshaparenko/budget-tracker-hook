@@ -18,12 +18,12 @@ export class AmountExtractor {
 
     // Patterns for different currency formats (in priority order)
     const patterns = [
-      // Main pattern: "1500 грн", "500 UAH", etc with space variations
-      /(\d+(?:[.,]\d{1,2})?)\s*(грн|грнс|uah|usd|eur|gbp|руб)/gi,
-      // With symbols: "$500", "€1000", "£100"
-      /[$€£₽]\s*(\d+(?:[.,]\d{1,2})?)/g,
-      // Amount after symbol: "500$", "1000€"
-      /(\d+(?:[.,]\d{1,2})?)\s*[$€£₽]/g,
+      // Main pattern: "1500 грн", "1,500.50 грн", "500 UAH", etc
+      /(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(грн|грнс|uah|usd|eur|gbp|руб)/gi,
+      // With symbols: "$500", "$1,500.50", "€1000", "£100"
+      /[$€£₽]\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)/g,
+      // Amount after symbol: "500$", "1,500.50$", "1000€"
+      /(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*[$€£₽]/g,
     ];
 
     let highestAmount: ExtractedAmount | null = null;
@@ -39,7 +39,13 @@ export class AmountExtractor {
         
         if (!amountStr) continue;
         
-        const amount = parseFloat(amountStr.replace(',', '.'));
+        // Remove thousands separators and normalize decimal separator to dot
+        const normalizedAmount = amountStr
+          .replace(/(\d),(\d{3})/g, '$1$2') // "1,500" -> "1500"
+          .replace(/(\d)\.(\d{3})/g, '$1$2') // "1.500" -> "1500" (European format)
+          .replace(',', '.'); // Normalize comma to dot for decimal
+        
+        const amount = parseFloat(normalizedAmount);
         
         // Exclude dates like "01.10" (day.month pattern)
         if (amount > 0 && amount < 999999 && amount !== Math.floor(amount) && amount < 32) {
