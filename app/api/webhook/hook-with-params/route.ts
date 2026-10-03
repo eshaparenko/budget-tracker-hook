@@ -32,7 +32,7 @@ export async function POST(request: Request) {
         debugLog.push(`URL param 'body': ${bodyParam ? `"${bodyParam.substring(0, 50)}..."` : '(empty)'}`);
 
         // 2. Use URL body parameter - it's always the source of truth
-        let bodyText = bodyParam;
+        let bodyText: string | null = bodyParam;
         
         // 3. Only check request body if URL param is missing
         if (!bodyText || bodyText.trim() === '') {
@@ -46,8 +46,11 @@ export async function POST(request: Request) {
                     debugLog.push(`Request body content: ${rawBody.substring(0, 100)}`);
                     try {
                         const json = JSON.parse(rawBody);
-                        bodyText = json.body || json.message || json.text || JSON.stringify(json);
-                        debugLog.push(`Extracted from JSON: ${bodyText.substring(0, 50)}`);
+                        const extracted = json.body || json.message || json.text || JSON.stringify(json);
+                        if (typeof extracted === 'string') {
+                            bodyText = extracted;
+                            debugLog.push(`Extracted from JSON: ${bodyText.substring(0, 50)}`);
+                        }
                     } catch {
                         bodyText = rawBody;
                         debugLog.push(`Parsed as plain text`);
