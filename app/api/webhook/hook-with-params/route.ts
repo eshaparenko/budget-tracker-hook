@@ -159,7 +159,13 @@ export async function POST(request: Request) {
       const sourceType = url.searchParams.get('source') || 'Other';
       
       const transaction: Transaction = {
-        date: new Date().toLocaleDateString('uk-UA'),
+        date: new Date().toLocaleString('uk-UA', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
         category: parsedData.category,
         amount: parsedData.amount,
         currency: parsedData.currency,
