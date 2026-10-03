@@ -12,177 +12,136 @@ const auth = new google.auth.GoogleAuth({
 });
 const sheets = google.sheets({ version: 'v4', auth });
 
-// Helper to safely parse request body without throwing
-async function safeGetBody(request: Request): Promise<{ text: string; error?: string }> {
-    try {
-        const contentType = request.headers.get('content-type') || '';
-        
-        // Always read as text first to avoid JSON parse errors
-        const text = await request.text();
-        
-        if (!text || text.trim() === '') {
-            return { text: '', error: 'Empty body' };
-        }
-        
-        // If it looks like JSON and content-type says so, try to parse
-        if (contentType.includes('application/json')) {
-            // Check if it's just empty JSON object
-            if (text.trim() === '{}' || text.trim() === '[]') {
-                return { text: '', error: 'Empty JSON object/array' };
-            }
-            
-            try {
-                JSON.parse(text);
-            } catch (e) {
-                return { text, error: `Invalid JSON: ${e instanceof Error ? e.message : 'Unknown error'}` };
-            }
-        }
-        
-        return { text };
-    } catch (error) {
-        return { text: '', error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-}
-
 export async function POST(request: Request) {
     const debugLog: string[] = [];
     
     try {
         debugLog.push("=== POST Request Started ===");
-        debugLog.push(`Request URL: ${request.url}`);
-        debugLog.push(`Request Method: ${request.method}`);
-        debugLog.push(`Content-Type: ${request.headers.get('content-type')}`);
-        debugLog.push("📝 RECOMMENDED: Send empty JSON body {} with URL params (?app=Gmail&body=...text...)");
+        debugLog.push(`URL: ${request.url}`);
+        debugLog.push(`Content-Type: ${request.headers.get('content-type') || 'not set'}`);
         
         const url = new URL(request.url);
-        debugLog.push(`Parsed URL: ${url.toString()}`);
+        debugLog.push(`Full URL: ${url.toString()}`);
+        debugLog.push(`Search params: ${url.search}`);
 
-        // 1. Get parameters from URL
-        let appName = url.searchParams.get("app");
-        let bodyText = url.searchParams.get("body");
+        // 1. Extract URL parameters
+        const app = url.searchParams.get("app") || "Gmail";
+        const bodyParam = url.searchParams.get("body");
         
-        debugLog.push(`URL Params - app: ${appName ? appName.substring(0, 50) : 'null'}`);
-        debugLog.push(`URL Params - body: ${bodyText ? bodyText.substring(0, 100) : 'null'}`);
+        debugLog.push(`URL param 'app': ${app}`);
+        debugLog.push(`URL param 'body': ${bodyParam ? `"${bodyParam.substring(0, 50)}..."` : '(empty)'}`);
 
-        // 2. If no body in URL params, try to parse request body
-        if (!bodyText) {
-            debugLog.push("Body text not found in URL params, attempting to parse request body");
-            const { text, error } = await safeGetBody(request);
-            
-            if (error) {
-                debugLog.push(`Body parsing info: ${error}`);
-            }
-            
-            debugLog.push(`Raw body length: ${text.length}`);
-            if (text.length > 0) {
-                debugLog.push(`Raw body (first 200 chars): ${text.substring(0, 200)}`);
-            }
-            
-            if (text && text.trim() !== '') {
-                try {
-                    const parsed = JSON.parse(text);
-                    debugLog.push(`Parsed as JSON object`);
-                    bodyText = parsed.body || parsed.message || JSON.stringify(parsed);
-                    appName = appName || parsed.app || 'unknown';
-                } catch {
-                    // Not JSON, treat as plain text
-                    debugLog.push(`Could not parse as JSON, treating as plain text`);
-                    bodyText = text;
+        // 2. Use URL body parameter - it's always the source of truth
+        let bodyText = bodyParam;
+        
+        // 3. Only check request body if URL param is missing
+        if (!bodyText || bodyText.trim() === '') {
+            debugLog.push("No 'body' URL param, checking request body...");
+            try {
+                const contentType = request.headers.get('content-type') || '';
+                const rawBody = await request.text();
+                debugLog.push(`Request body length: ${rawBody.length}`);
+                
+                if (rawBody && rawBody.trim() && rawBody.trim() !== '{}' && rawBody.trim() !== '[]') {
+                    debugLog.push(`Request body content: ${rawBody.substring(0, 100)}`);
+                    try {
+                        const json = JSON.parse(rawBody);
+                        bodyText = json.body || json.message || json.text || JSON.stringify(json);
+                        debugLog.push(`Extracted from JSON: ${bodyText.substring(0, 50)}`);
+                    } catch {
+                        bodyText = rawBody;
+                        debugLog.push(`Parsed as plain text`);
+                    }
+                } else {
+                    debugLog.push(`Request body is empty or just {}`);
                 }
+            } catch (e) {
+                debugLog.push(`Error reading body: ${e instanceof Error ? e.message : 'unknown'}`);
             }
         }
 
+        // 4. Final validation
         if (!bodyText || bodyText.trim() === '') {
-            debugLog.push("Final bodyText is empty after all parsing attempts");
+            debugLog.push("❌ ERROR: No body content available");
             return NextResponse.json({
-                error: "No body content found in URL params or request body",
+                error: "No body content",
                 debugLog,
-                hint: "Send request with URL parameters: ?app=Gmail&body=your%20transaction%20text"
+                usage: "POST /api/webhook/hook-with-params?app=Gmail&body=your%20text%20here"
             }, { status: 400 });
         }
 
-        // Sanitize text
-        const sanitizedBody = bodyText
+        debugLog.push(`✓ Body received: ${bodyText.length} chars`);
+        debugLog.push(`✓ App: ${app}`);
+
+        // 5. Sanitize for Gemini
+        const sanitized = bodyText
             .replace(/[\r\n]+/g, " ")
+            .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
             .trim();
 
-        debugLog.push(`App Name: ${appName || 'not provided'}`);
-        debugLog.push(`Original Body Length: ${bodyText.length} chars`);
-        debugLog.push(`Sanitized Body (first 100 chars): ${sanitizedBody.substring(0, 100)}`);
-
-        // 3. Analyze with Gemini
+        // 6. Call Gemini
         const model = genAI.getGenerativeModel({
-            model: 'gemini-flash-lite-latest' ,
-            generationConfig: { responseMimeType: "application/json" }});
-        
+            model: 'gemini-flash-lite-latest',
+            generationConfig: { responseMimeType: "application/json" }
+        });
+
         const categories = ["Дім", "Одяг", "Авто", "Їжа й хозяйство", "Освіта", "Паливо", "Комуналка", "Розваги", "Підписки", "Здоров'я", "Інше"];
-        const currentDate = new Date().toLocaleDateString('uk-UA');
-
-        const sanitizedText = sanitizedBody
-            .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
-            .replace(/\n/g, " ")
-            .replace(/\r/g, "");
-
-        const prompt = `
-          Проаналізуй текст транзакції: "${sanitizedText}"
-          Витягни дані у JSON:
-          {
-            "category": "одна з: ${categories.join(', ')}",
-            "amount": число,
-            "currency": "валюта (UAH, ALL, EUR тощо)",
-            "merchant": "назва закладу чи сервісу"
-          }
-        `;
         
-        debugLog.push("Sending request to Gemini API");
-        let parsedData;
+        const prompt = `Проаналізуй текст транзакції: "${sanitized}"
+Витягни дані у JSON:
+{
+  "category": "одна з: ${categories.join(', ')}",
+  "amount": число,
+  "currency": "валюта (UAH, USD, EUR тощо)",
+  "merchant": "назва закладу чи сервісу"
+}`;
 
+        debugLog.push("→ Calling Gemini...");
         const result = await model.generateContent(prompt);
-        debugLog.push(`Gemini Response: ${result.response.text().substring(0, 200)}`);
-        
+        const geminiText = result.response.text();
+        debugLog.push(`← Gemini response: ${geminiText.substring(0, 100)}`);
+
+        let parsedData;
         try {
-            parsedData = JSON.parse(result.response.text());
-            debugLog.push(`Successfully parsed Gemini response`);
-        } catch (parseError) {
-            debugLog.push(`Error parsing Gemini JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
-            debugLog.push(`Gemini raw response: ${result.response.text()}`);
+            parsedData = JSON.parse(geminiText);
+            debugLog.push(`✓ Parsed Gemini JSON`);
+        } catch (e) {
+            debugLog.push(`❌ Failed to parse Gemini response: ${e instanceof Error ? e.message : 'unknown'}`);
             return NextResponse.json({
-                error: 'Failed to parse AI response',
+                error: "Gemini response parsing failed",
                 debugLog,
-                geminiResponse: result.response.text()
+                geminiRaw: geminiText
             }, { status: 500 });
         }
 
-        // 4. Write to Google Sheets
-        debugLog.push("Attempting to write to Google Sheets");
+        // 7. Write to Sheets
+        const currentDate = new Date().toLocaleDateString('uk-UA');
+        debugLog.push("→ Writing to Google Sheets...");
+        
         await sheets.spreadsheets.values.append({
             spreadsheetId: process.env.GOOGLE_SHEET_ID,
             range: 'Transactions!A:F',
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[currentDate, parsedData.category, parsedData.amount, parsedData.currency, parsedData.merchant, appName]],
+                values: [[currentDate, parsedData.category, parsedData.amount, parsedData.currency, parsedData.merchant, app]],
             },
         });
         
-        debugLog.push("Successfully wrote to Google Sheets");
+        debugLog.push("✓ Wrote to Google Sheets");
 
         return NextResponse.json({
             success: true,
             parsedData,
-            debugLog,
-            receivedAt: new Date().toISOString()
+            debugLog
         });
+
     } catch (error) {
-        debugLog.push(`FATAL ERROR: ${error instanceof Error ? error.message : String(error)}`);
-        debugLog.push(`Stack: ${error instanceof Error ? error.stack?.substring(0, 500) : 'N/A'}`);
+        debugLog.push(`❌ ERROR: ${error instanceof Error ? error.message : String(error)}`);
+        console.error('Webhook error:', error);
         
-        console.error('Error:', error);
         return NextResponse.json({
-            error: 'Server Error',
-            debugLog,
-            errorDetails: error instanceof Error ? {
-                message: error.message,
-            } : String(error)
+            error: 'Server error',
+            debugLog
         }, { status: 500 });
     }
 }
@@ -191,18 +150,16 @@ export async function GET() {
     try {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
-            return NextResponse.json({ error: 'API ключ не знайдено в .env.local' }, { status: 500 });
+            return NextResponse.json({ error: 'API key missing' }, { status: 500 });
         }
 
-        // Робимо прямий запит до Google API для отримання списку всіх моделей
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
         const data = await response.json();
 
         if (!data.models) {
-            return NextResponse.json({ error: 'Не вдалося отримати список', details: data }, { status: 500 });
+            return NextResponse.json({ error: 'Failed to fetch models', details: data }, { status: 500 });
         }
 
-        // Фільтруємо тільки ті моделі, які підтримують генерацію тексту (generateContent)
         const availableModels = data.models
             .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
             .map((m: any) => m.name);
@@ -213,7 +170,7 @@ export async function GET() {
         });
 
     } catch (error) {
-        console.error('Помилка при отриманні моделей:', error);
+        console.error('Error fetching models:', error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
 }
