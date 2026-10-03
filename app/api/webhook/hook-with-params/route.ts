@@ -32,9 +32,14 @@ export async function POST(request: Request) {
   const logger = new Logger();
   const debugLog: string[] = [];
 
+  // Extract debug parameter from URL
+  const url = new URL(request.url);
+  const debugEnabled = url.searchParams.get('debug')?.toLowerCase() === 'true';
+
   try {
     debugLog.push('=== Webhook Handler Started ===');
-    logger.log('Webhook request received');
+    debugLog.push(`Debug mode: ${debugEnabled ? 'ENABLED' : 'DISABLED'}`);
+    logger.log('Webhook request received', { debug: debugEnabled });
 
     // Load configuration
     let config;
@@ -45,11 +50,11 @@ export async function POST(request: Request) {
       debugLog.push(
         `❌ Configuration error: ${error instanceof Error ? error.message : 'unknown'}`
       );
-      return ResponseBuilder.error(
-        'Server configuration error',
-        500,
-        debugLog
-      );
+      return NextResponse.json({
+        success: false,
+        error: 'Server configuration error',
+        ...(debugEnabled && { debugLog }),
+      }, { status: 500 });
     }
 
     // Step 1: Parse request
@@ -68,11 +73,11 @@ export async function POST(request: Request) {
         `❌ Parse error: ${error instanceof Error ? error.message : 'unknown'}`
       );
       logger.error('Request parsing failed', error);
-      return ResponseBuilder.error(
-        'Failed to parse request',
-        400,
-        debugLog
-      );
+      return NextResponse.json({
+        success: false,
+        error: 'Failed to parse request',
+        ...(debugEnabled && { debugLog }),
+      }, { status: 400 });
     }
 
     // Step 2: Validate body content
@@ -81,11 +86,11 @@ export async function POST(request: Request) {
     if (!validation.isValid) {
       debugLog.push(`❌ Validation errors: ${validation.errors.join(', ')}`);
       logger.error('Body validation failed', { errors: validation.errors });
-      return ResponseBuilder.error(
-        'Invalid transaction body',
-        400,
-        debugLog
-      );
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid transaction body',
+        ...(debugEnabled && { debugLog }),
+      }, { status: 400 });
     }
     debugLog.push('✓ Body content validated');
 
@@ -106,11 +111,11 @@ export async function POST(request: Request) {
         `❌ Analysis error: ${error instanceof Error ? error.message : 'unknown'}`
       );
       logger.error('Transaction analysis failed', error);
-      return ResponseBuilder.error(
-        'Failed to analyze transaction',
-        500,
-        debugLog
-      );
+      return NextResponse.json({
+        success: false,
+        error: 'Failed to analyze transaction',
+        ...(debugEnabled && { debugLog }),
+      }, { status: 500 });
     }
 
     // Step 4: Save to Google Sheets
@@ -135,11 +140,11 @@ export async function POST(request: Request) {
         `❌ Save error: ${error instanceof Error ? error.message : 'unknown'}`
       );
       logger.error('Failed to save transaction', error);
-      return ResponseBuilder.error(
-        'Failed to save transaction',
-        500,
-        debugLog
-      );
+      return NextResponse.json({
+        success: false,
+        error: 'Failed to save transaction',
+        ...(debugEnabled && { debugLog }),
+      }, { status: 500 });
     }
 
     // Success response
@@ -148,18 +153,22 @@ export async function POST(request: Request) {
       duration: timer.elapsedMs(),
     });
 
-    return ResponseBuilder.success(parsedData, debugLog);
+    return NextResponse.json({
+      success: true,
+      parsedData,
+      ...(debugEnabled && { debugLog }),
+    }, { status: 200 });
   } catch (error) {
     debugLog.push(
       `❌ Unexpected error: ${error instanceof Error ? error.message : 'unknown'}`
     );
     logger.error('Webhook failed', error);
 
-    return ResponseBuilder.error(
-      'An unexpected error occurred',
-      500,
-      debugLog
-    );
+    return NextResponse.json({
+      success: false,
+      error: 'An unexpected error occurred',
+      ...(debugEnabled && { debugLog }),
+    }, { status: 500 });
   }
 }
 
