@@ -7,6 +7,7 @@ import { NextResponse } from 'next/server';
 import { RequestParser } from '@/lib/services/requestParser';
 import { TransactionAnalyzer } from '@/lib/services/transactionAnalyzer';
 import { TransactionTypeDetector } from '@/lib/services/transactionTypeDetector';
+import { AmountExtractor } from '@/lib/services/amountExtractor';
 import { SheetsRepository } from '@/lib/repositories/sheetsRepository';
 import { getEnvironmentConfig } from '@/lib/config/environment';
 import { Logger, ErrorMapper, ResponseBuilder, Timer } from '@/lib/utils/errorHandler';
@@ -97,7 +98,11 @@ export async function POST(request: Request) {
         ...(debugEnabled && { debugLog }),
       }, { status: 400 });
     }
-    debugLog.push('✓ Body content validated');
+    // Step 2.5: Pre-extract amount (improves Gemini accuracy)
+    debugLog.push('→ Step 2.5: Pre-extracting amount from text');
+    const amountExtractor = new AmountExtractor();
+    const preExtractedAmount = amountExtractor.extract(webhookRequest.body);
+    debugLog.push(...amountExtractor.getDebugLog());
 
     // Step 3: Analyze transaction
     debugLog.push('→ Step 3: Analyzing transaction with AI');
@@ -107,6 +112,16 @@ export async function POST(request: Request) {
       const analyzer = new TransactionAnalyzer(config.geminiApiKey);
       parsedData = await analyzer.analyze(validation.sanitized || webhookRequest.body);
       debugLog.push(...analyzer.getDebugLog());
+      
+      // Use pre-extracted amount if Gemini didn't find one
+      if (preExtractedAmount && parsedData.amount === 0) {
+        debugLog.push(`✓ Using pre-extracted amount: ${preExtractedAmount.amount} ${preExtractedAmount.currency}`);
+        parsedData.amount = preExtractedAmount.amount;
+        if (!parsedData.currency) {
+          parsedData.currency = preExtractedAmount.currency;
+        }
+      }
+      
       logger.log('Transaction analyzed', {
         category: parsedData.category,
         amount: parsedData.amount,
