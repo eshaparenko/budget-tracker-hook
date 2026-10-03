@@ -20,12 +20,17 @@ async function safeGetBody(request: Request): Promise<{ text: string; error?: st
         // Always read as text first to avoid JSON parse errors
         const text = await request.text();
         
-        if (!text) {
+        if (!text || text.trim() === '') {
             return { text: '', error: 'Empty body' };
         }
         
         // If it looks like JSON and content-type says so, try to parse
-        if (contentType.includes('application/json') && text.trim().startsWith('{')) {
+        if (contentType.includes('application/json')) {
+            // Check if it's just empty JSON object
+            if (text.trim() === '{}' || text.trim() === '[]') {
+                return { text: '', error: 'Empty JSON object/array' };
+            }
+            
             try {
                 JSON.parse(text);
             } catch (e) {
@@ -47,6 +52,7 @@ export async function POST(request: Request) {
         debugLog.push(`Request URL: ${request.url}`);
         debugLog.push(`Request Method: ${request.method}`);
         debugLog.push(`Content-Type: ${request.headers.get('content-type')}`);
+        debugLog.push("📝 RECOMMENDED: Send empty JSON body {} with URL params (?app=Gmail&body=...text...)");
         
         const url = new URL(request.url);
         debugLog.push(`Parsed URL: ${url.toString()}`);
@@ -64,13 +70,15 @@ export async function POST(request: Request) {
             const { text, error } = await safeGetBody(request);
             
             if (error) {
-                debugLog.push(`Body parsing warning: ${error}`);
+                debugLog.push(`Body parsing info: ${error}`);
             }
             
             debugLog.push(`Raw body length: ${text.length}`);
-            debugLog.push(`Raw body (first 200 chars): ${text.substring(0, 200)}`);
+            if (text.length > 0) {
+                debugLog.push(`Raw body (first 200 chars): ${text.substring(0, 200)}`);
+            }
             
-            if (text) {
+            if (text && text.trim() !== '') {
                 try {
                     const parsed = JSON.parse(text);
                     debugLog.push(`Parsed as JSON object`);
@@ -87,8 +95,9 @@ export async function POST(request: Request) {
         if (!bodyText || bodyText.trim() === '') {
             debugLog.push("Final bodyText is empty after all parsing attempts");
             return NextResponse.json({
-                error: "No body content found",
-                debugLog
+                error: "No body content found in URL params or request body",
+                debugLog,
+                hint: "Send request with URL parameters: ?app=Gmail&body=your%20transaction%20text"
             }, { status: 400 });
         }
 
