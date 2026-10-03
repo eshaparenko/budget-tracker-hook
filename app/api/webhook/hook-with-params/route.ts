@@ -13,16 +13,67 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: 'v4', auth });
 
 export async function POST(request: Request) {
+    const debugLog: string[] = [];
+    
     try {
+        debugLog.push("=== POST Request Started ===");
+        debugLog.push(`Request URL: ${request.url}`);
+        debugLog.push(`Request Method: ${request.method}`);
+        debugLog.push(`Content-Type: ${request.headers.get('content-type')}`);
+        
         const url = new URL(request.url);
+        debugLog.push(`Parsed URL: ${url.toString()}`);
 
         // 1. Спочатку пробуємо забрати параметри з URL (якщо MacroDroid передає їх у вигляді ?app=...&body=...)
         let appName = url.searchParams.get("app");
         let bodyText = url.searchParams.get("body");
+        
+        debugLog.push(`URL Params - app: ${appName ? appName.substring(0, 50) : 'null'}`);
+        debugLog.push(`URL Params - body: ${bodyText ? bodyText.substring(0, 100) : 'null'}`);
 
         // 2. Якщо в URL параметрів немає, перевіряємо тіло запиту (Body)
         if (!bodyText) {
-            return NextResponse.json({ error: "No body in URL parameters" }, { status: 400 });
+            debugLog.push("Body text not found in URL params, attempting to parse request body");
+            try {
+                const contentType = request.headers.get('content-type') || '';
+                
+                if (contentType.includes('application/json')) {
+                    debugLog.push("Content-Type is JSON, parsing JSON body");
+                    const jsonBody = await request.json();
+                    debugLog.push(`JSON Body parsed: ${JSON.stringify(jsonBody).substring(0, 100)}`);
+                    bodyText = jsonBody.body || jsonBody.message || JSON.stringify(jsonBody);
+                    appName = appName || jsonBody.app || 'unknown';
+                } else if (contentType.includes('application/x-www-form-urlencoded')) {
+                    debugLog.push("Content-Type is form-urlencoded, parsing form data");
+                    const text = await request.text();
+                    debugLog.push(`Raw body: ${text.substring(0, 100)}`);
+                    const params = new URLSearchParams(text);
+                    bodyText = params.get('body') || params.get('message') || text;
+                    appName = appName || params.get('app') || 'unknown';
+                } else if (contentType.includes('text/plain')) {
+                    debugLog.push("Content-Type is text/plain, reading as text");
+                    bodyText = await request.text();
+                    debugLog.push(`Text body: ${bodyText.substring(0, 100)}`);
+                } else {
+                    debugLog.push(`Unknown content-type: ${contentType}, attempting text parsing`);
+                    bodyText = await request.text();
+                }
+            } catch (parseBodyError) {
+                debugLog.push(`Error parsing request body: ${parseBodyError instanceof Error ? parseBodyError.message : String(parseBodyError)}`);
+                return NextResponse.json({
+                    error: "Failed to parse request body",
+                    debugLog,
+                    details: parseBodyError instanceof Error ? parseBodyError.message : String(parseBodyError)
+                }, { status: 400 });
+            }
+        }
+
+        if (!bodyText || bodyText.trim() === '') {
+            debugLog.push("Final bodyText is empty after all parsing attempts");
+            return NextResponse.json({
+                error: "No body content found",
+                debugLog
+            }, { status: 400 });
         }
 
         // Очищаємо текст від переносів рядків та зайвих символів для Gemini
@@ -30,19 +81,21 @@ export async function POST(request: Request) {
             .replace(/[\r\n]+/g, " ")
             .trim();
 
-        console.log("Parsed App:", appName);
-        console.log("Parsed Body:", sanitizedBody);
+        debugLog.push(`App Name: ${appName}`);
+        debugLog.push(`Original Body Length: ${bodyText.length} chars`);
+        debugLog.push(`Sanitized Body (first 100 chars): ${sanitizedBody.substring(0, 100)}`);
 
         // 2. Аналіз через Gemini
         const model = genAI.getGenerativeModel({
             model: 'gemini-flash-lite-latest' ,
             generationConfig: { responseMimeType: "application/json" }});
+        
         // Категорії підлаштовані під ваш звичний флоу
         const categories = ["Дім", "Одяг", "Авто", "Їжа й хозяйство", "Освіта", "Паливо", "Комуналка", "Розваги", "Підписки", "Здоров'я", "Інше"];
         // Отримуємо поточну дату у форматі DD.MM.YYYY
         const currentDate = new Date().toLocaleDateString('uk-UA');
 
-        // 2. Очищаємо текст від керуючих символів, які ламають JSON (переноси рядків, табуляція тощо)
+        // Очищаємо текст від керуючих символів, які ламають JSON (переноси рядків, табуляція тощо)
         const sanitizedText = sanitizedBody
             .replace(/[\u0000-\u001F\u007F-\u009F]/g, "") // видаляємо невидимі управляючі символи
             .replace(/\n/g, " ")                           // переноси рядків замінюємо на пробіл
@@ -58,17 +111,28 @@ export async function POST(request: Request) {
             "merchant": "назва закладу чи сервісу"
           }
         `;
+        
+        debugLog.push("Sending request to Gemini API");
         let parsedData;
 
         const result = await model.generateContent(prompt);
+        debugLog.push(`Gemini Response: ${result.response.text().substring(0, 200)}`);
+        
         try {
             parsedData = JSON.parse(result.response.text());
+            debugLog.push(`Successfully parsed Gemini response: ${JSON.stringify(parsedData)}`);
         } catch (parseError) {
-            console.error("Помилка парсингу відповіді Gemini:", result.response.text());
-            return NextResponse.json({ error: 'Failed to parse AI response' }, { status: 500 });
+            debugLog.push(`Error parsing Gemini JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+            debugLog.push(`Gemini raw response: ${result.response.text()}`);
+            return NextResponse.json({
+                error: 'Failed to parse AI response',
+                debugLog,
+                geminiResponse: result.response.text()
+            }, { status: 500 });
         }
 
         // 3. Запис у Google Sheets
+        debugLog.push("Attempting to write to Google Sheets");
         await sheets.spreadsheets.values.append({
             spreadsheetId: process.env.GOOGLE_SHEET_ID,
             range: 'Transactions!A:F',
@@ -77,11 +141,28 @@ export async function POST(request: Request) {
                 values: [[currentDate, parsedData.category, parsedData.amount, parsedData.currency, parsedData.merchant, appName]],
             },
         });
+        
+        debugLog.push("Successfully wrote to Google Sheets");
 
-        return NextResponse.json({ success: true, parsedData });
+        return NextResponse.json({
+            success: true,
+            parsedData,
+            debugLog,
+            receivedAt: new Date().toISOString()
+        });
     } catch (error) {
+        debugLog.push(`FATAL ERROR: ${error instanceof Error ? error.message : String(error)}`);
+        debugLog.push(`Stack: ${error instanceof Error ? error.stack : 'N/A'}`);
+        
         console.error('Error:', error);
-        return NextResponse.json({ error: 'Server Error' }, { status: 500 });
+        return NextResponse.json({
+            error: 'Server Error',
+            debugLog,
+            errorDetails: error instanceof Error ? {
+                message: error.message,
+                stack: error.stack
+            } : String(error)
+        }, { status: 500 });
     }
 }
 
