@@ -174,5 +174,20 @@ describe('TransactionIntentDetector', () => {
       );
       expect(result.isTransaction).toBe(true);
     });
+
+    it('should handle currency exchange request - ambiguous', () => {
+      // "Поміняй 50 євро" = "Exchange 50 euros" - action verb but unclear if actual transaction
+      const result = detector.detect('Поміняй 50 євро');
+      // Could be request or instruction, not a completed transaction
+      // With amount present, should be treated as possible transaction
+      expect(result.confidence).toBeGreaterThanOrEqual(0.6);
+    });
+
+    it('should accept money received notification', () => {
+      // "Тобі прийшли гроші за сміття 2500 грн" = "You received money for trash 2500 UAH"
+      const result = detector.detect('Тобі прийшли гроші за сміття 2500 грн');
+      expect(result.isTransaction).toBe(true);
+      expect(result.reason).toContain('transaction');
+    });
   });
 });
