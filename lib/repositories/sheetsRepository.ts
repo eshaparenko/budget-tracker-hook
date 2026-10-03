@@ -50,20 +50,22 @@ export class SheetsRepository {
     try {
       this.validateTransaction(transaction);
 
+      // Column structure: Date | Category | Amount | Currency | Merchant | App | Source
       const row = [
         transaction.date,
         transaction.category,
         transaction.amount,
         transaction.currency,
         transaction.merchant,
-        transaction.source,
+        transaction.source, // App (Gmail, Telegram, etc.)
+        transaction.sourceType || 'Other', // New: Source type (Email, Telegram, Viber, Bank, etc.)
       ];
 
       this.debugLog.push(`→ Writing row: ${JSON.stringify(row)}`);
 
       const response = await this.sheets.spreadsheets.values.append({
         spreadsheetId: this.spreadsheetId,
-        range: 'Transactions!A:F',
+        range: 'Transactions!A:G',
         valueInputOption: 'USER_ENTERED',
         requestBody: {
           values: [row],
@@ -108,6 +110,10 @@ export class SheetsRepository {
 
     if (!transaction.source || typeof transaction.source !== 'string') {
       errors.push('Source is required and must be a string');
+    }
+
+    if (transaction.sourceType && typeof transaction.sourceType !== 'string') {
+      errors.push('SourceType must be a string');
     }
 
     if (errors.length > 0) {

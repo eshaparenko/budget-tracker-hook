@@ -8,7 +8,8 @@ export interface Transaction {
   amount: number;
   currency: string;
   merchant: string;
-  source: string;
+  source: string; // App name (Gmail, Telegram, etc.)
+  sourceType?: string; // Source type (Email, Telegram, Viber, Bank, etc.)
 }
 
 export interface ParsedTransaction {

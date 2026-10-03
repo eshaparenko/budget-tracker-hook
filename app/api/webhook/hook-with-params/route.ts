@@ -18,14 +18,18 @@ import { Transaction } from '@/lib/types';
  * Accepts financial transaction data, analyzes it with AI, and stores in Google Sheets
  * 
  * Query Parameters:
- * - app: Source application (e.g., "Gmail", "Ukrsib")
+ * - app: Source application (e.g., "Gmail", "Telegram", "Viber", "Bank")
  * - body: Transaction text to analyze
+ * - source: Source type (e.g., "Email", "Telegram", "Viber", "Bank", "Other") [optional, defaults to "Other"]
+ * - debug: Set to "true" to include debug logs in response [optional]
  * 
  * Request Body:
  * - Empty JSON object {} required (for proper content-type handling)
  * 
- * Example:
- * POST /api/webhook/hook-with-params?app=Gmail&body=Payment%20150%20UAH%20to%20Starbucks
+ * Examples:
+ * POST /api/webhook/hook-with-params?app=Gmail&source=Email&body=Payment%20150%20UAH%20to%20Starbucks
+ * POST /api/webhook/hook-with-params?app=Telegram&source=Telegram&body=💳%20150%20UAH&debug=true
+ * POST /api/webhook/hook-with-params?app=Bank&source=Bank&body=Transfer%20500%20UAH
  */
 export async function POST(request: Request) {
   const timer = new Timer();
@@ -123,6 +127,9 @@ export async function POST(request: Request) {
     try {
       const repository = new SheetsRepository(config.googleSheetId);
       
+      // Extract sourceType from URL parameter (Telegram, Viber, Bank, Email, etc.)
+      const sourceType = url.searchParams.get('source') || 'Other';
+      
       const transaction: Transaction = {
         date: new Date().toLocaleDateString('uk-UA'),
         category: parsedData.category,
@@ -130,11 +137,12 @@ export async function POST(request: Request) {
         currency: parsedData.currency,
         merchant: parsedData.merchant,
         source: webhookRequest.app,
+        sourceType,
       };
 
       await repository.appendTransaction(transaction);
       debugLog.push(...repository.getDebugLog());
-      logger.log('Transaction saved', { source: webhookRequest.app });
+      logger.log('Transaction saved', { source: webhookRequest.app, sourceType });
     } catch (error) {
       debugLog.push(
         `❌ Save error: ${error instanceof Error ? error.message : 'unknown'}`
