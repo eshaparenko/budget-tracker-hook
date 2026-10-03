@@ -12,6 +12,33 @@ const auth = new google.auth.GoogleAuth({
 });
 const sheets = google.sheets({ version: 'v4', auth });
 
+// Helper to safely parse request body without throwing
+async function safeGetBody(request: Request): Promise<{ text: string; error?: string }> {
+    try {
+        const contentType = request.headers.get('content-type') || '';
+        
+        // Always read as text first to avoid JSON parse errors
+        const text = await request.text();
+        
+        if (!text) {
+            return { text: '', error: 'Empty body' };
+        }
+        
+        // If it looks like JSON and content-type says so, try to parse
+        if (contentType.includes('application/json') && text.trim().startsWith('{')) {
+            try {
+                JSON.parse(text);
+            } catch (e) {
+                return { text, error: `Invalid JSON: ${e instanceof Error ? e.message : 'Unknown error'}` };
+            }
+        }
+        
+        return { text };
+    } catch (error) {
+        return { text: '', error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+}
+
 export async function POST(request: Request) {
     const debugLog: string[] = [];
     
@@ -24,59 +51,36 @@ export async function POST(request: Request) {
         const url = new URL(request.url);
         debugLog.push(`Parsed URL: ${url.toString()}`);
 
-        // 1. Спочатку пробуємо забрати параметри з URL (якщо MacroDroid передає їх у вигляді ?app=...&body=...)
+        // 1. Get parameters from URL
         let appName = url.searchParams.get("app");
         let bodyText = url.searchParams.get("body");
         
         debugLog.push(`URL Params - app: ${appName ? appName.substring(0, 50) : 'null'}`);
         debugLog.push(`URL Params - body: ${bodyText ? bodyText.substring(0, 100) : 'null'}`);
 
-        // 2. Якщо в URL параметрів немає, перевіряємо тіло запиту (Body)
+        // 2. If no body in URL params, try to parse request body
         if (!bodyText) {
             debugLog.push("Body text not found in URL params, attempting to parse request body");
-            try {
-                const contentType = request.headers.get('content-type') || '';
-                debugLog.push(`Processing content-type: ${contentType}`);
-                
-                if (contentType.includes('application/json')) {
-                    debugLog.push("Content-Type is JSON, parsing JSON body");
-                    try {
-                        const jsonBody = await request.json();
-                        debugLog.push(`JSON Body parsed: ${JSON.stringify(jsonBody).substring(0, 100)}`);
-                        bodyText = jsonBody.body || jsonBody.message || JSON.stringify(jsonBody);
-                        appName = appName || jsonBody.app || 'unknown';
-                    } catch (jsonError) {
-                        debugLog.push(`Failed to parse JSON: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}`);
-                        debugLog.push("Falling back to text parsing");
-                        const text = await request.clone().text();
-                        debugLog.push(`Raw text length: ${text.length}, first 200 chars: ${text.substring(0, 200)}`);
-                        bodyText = text;
-                    }
-                } else if (contentType.includes('application/x-www-form-urlencoded')) {
-                    debugLog.push("Content-Type is form-urlencoded, parsing form data");
-                    const text = await request.text();
-                    debugLog.push(`Raw body: ${text.substring(0, 100)}`);
-                    const params = new URLSearchParams(text);
-                    bodyText = params.get('body') || params.get('message') || text;
-                    appName = appName || params.get('app') || 'unknown';
-                } else if (contentType.includes('text/plain')) {
-                    debugLog.push("Content-Type is text/plain, reading as text");
-                    bodyText = await request.text();
-                    debugLog.push(`Text body length: ${bodyText.length}`);
-                } else {
-                    debugLog.push(`Unknown/empty content-type: "${contentType}", attempting text parsing`);
-                    const rawText = await request.text();
-                    debugLog.push(`Raw text length: ${rawText.length}, first 200 chars: ${rawText.substring(0, 200)}`);
-                    bodyText = rawText;
+            const { text, error } = await safeGetBody(request);
+            
+            if (error) {
+                debugLog.push(`Body parsing warning: ${error}`);
+            }
+            
+            debugLog.push(`Raw body length: ${text.length}`);
+            debugLog.push(`Raw body (first 200 chars): ${text.substring(0, 200)}`);
+            
+            if (text) {
+                try {
+                    const parsed = JSON.parse(text);
+                    debugLog.push(`Parsed as JSON object`);
+                    bodyText = parsed.body || parsed.message || JSON.stringify(parsed);
+                    appName = appName || parsed.app || 'unknown';
+                } catch {
+                    // Not JSON, treat as plain text
+                    debugLog.push(`Could not parse as JSON, treating as plain text`);
+                    bodyText = text;
                 }
-            } catch (parseBodyError) {
-                debugLog.push(`Error parsing request body: ${parseBodyError instanceof Error ? parseBodyError.message : String(parseBodyError)}`);
-                debugLog.push(`Stack: ${parseBodyError instanceof Error ? parseBodyError.stack : 'N/A'}`);
-                return NextResponse.json({
-                    error: "Failed to parse request body",
-                    debugLog,
-                    details: parseBodyError instanceof Error ? parseBodyError.message : String(parseBodyError)
-                }, { status: 400 });
             }
         }
 
@@ -88,29 +92,26 @@ export async function POST(request: Request) {
             }, { status: 400 });
         }
 
-        // Очищаємо текст від переносів рядків та зайвих символів для Gemini
+        // Sanitize text
         const sanitizedBody = bodyText
             .replace(/[\r\n]+/g, " ")
             .trim();
 
-        debugLog.push(`App Name: ${appName}`);
+        debugLog.push(`App Name: ${appName || 'not provided'}`);
         debugLog.push(`Original Body Length: ${bodyText.length} chars`);
         debugLog.push(`Sanitized Body (first 100 chars): ${sanitizedBody.substring(0, 100)}`);
 
-        // 2. Аналіз через Gemini
+        // 3. Analyze with Gemini
         const model = genAI.getGenerativeModel({
             model: 'gemini-flash-lite-latest' ,
             generationConfig: { responseMimeType: "application/json" }});
         
-        // Категорії підлаштовані під ваш звичний флоу
         const categories = ["Дім", "Одяг", "Авто", "Їжа й хозяйство", "Освіта", "Паливо", "Комуналка", "Розваги", "Підписки", "Здоров'я", "Інше"];
-        // Отримуємо поточну дату у форматі DD.MM.YYYY
         const currentDate = new Date().toLocaleDateString('uk-UA');
 
-        // Очищаємо текст від керуючих символів, які ламають JSON (переноси рядків, табуляція тощо)
         const sanitizedText = sanitizedBody
-            .replace(/[\u0000-\u001F\u007F-\u009F]/g, "") // видаляємо невидимі управляючі символи
-            .replace(/\n/g, " ")                           // переноси рядків замінюємо на пробіл
+            .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+            .replace(/\n/g, " ")
             .replace(/\r/g, "");
 
         const prompt = `
@@ -132,7 +133,7 @@ export async function POST(request: Request) {
         
         try {
             parsedData = JSON.parse(result.response.text());
-            debugLog.push(`Successfully parsed Gemini response: ${JSON.stringify(parsedData)}`);
+            debugLog.push(`Successfully parsed Gemini response`);
         } catch (parseError) {
             debugLog.push(`Error parsing Gemini JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
             debugLog.push(`Gemini raw response: ${result.response.text()}`);
@@ -143,7 +144,7 @@ export async function POST(request: Request) {
             }, { status: 500 });
         }
 
-        // 3. Запис у Google Sheets
+        // 4. Write to Google Sheets
         debugLog.push("Attempting to write to Google Sheets");
         await sheets.spreadsheets.values.append({
             spreadsheetId: process.env.GOOGLE_SHEET_ID,
@@ -164,7 +165,7 @@ export async function POST(request: Request) {
         });
     } catch (error) {
         debugLog.push(`FATAL ERROR: ${error instanceof Error ? error.message : String(error)}`);
-        debugLog.push(`Stack: ${error instanceof Error ? error.stack : 'N/A'}`);
+        debugLog.push(`Stack: ${error instanceof Error ? error.stack?.substring(0, 500) : 'N/A'}`);
         
         console.error('Error:', error);
         return NextResponse.json({
@@ -172,7 +173,6 @@ export async function POST(request: Request) {
             debugLog,
             errorDetails: error instanceof Error ? {
                 message: error.message,
-                stack: error.stack
             } : String(error)
         }, { status: 500 });
     }
