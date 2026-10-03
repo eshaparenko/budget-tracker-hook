@@ -6,6 +6,7 @@
 import { NextResponse } from 'next/server';
 import { RequestParser } from '@/lib/services/requestParser';
 import { TransactionAnalyzer } from '@/lib/services/transactionAnalyzer';
+import { TransactionTypeDetector } from '@/lib/services/transactionTypeDetector';
 import { SheetsRepository } from '@/lib/repositories/sheetsRepository';
 import { getEnvironmentConfig } from '@/lib/config/environment';
 import { Logger, ErrorMapper, ResponseBuilder, Timer } from '@/lib/utils/errorHandler';
@@ -122,6 +123,33 @@ export async function POST(request: Request) {
       }, { status: 500 });
     }
 
+    // Step 3.5: Detect transaction type and extract details
+    debugLog.push('→ Step 3.5: Detecting transaction type and details');
+    try {
+      const typeDetector = new TransactionTypeDetector();
+      const detectionResult = typeDetector.detect(validation.sanitized || webhookRequest.body);
+      debugLog.push(...typeDetector.getDebugLog());
+      
+      // Merge detection results with parsed data
+      if (detectionResult.transactionType !== 'Other') {
+        parsedData.transactionType = detectionResult.transactionType;
+      }
+      if (detectionResult.details) {
+        parsedData.details = detectionResult.details;
+      }
+      
+      logger.log('Transaction type detected', {
+        type: parsedData.transactionType,
+        details: parsedData.details?.substring(0, 50),
+      });
+    } catch (error) {
+      debugLog.push(
+        `⚠ Type detection error: ${error instanceof Error ? error.message : 'unknown'}`
+      );
+      // Don't fail the whole request, just skip type detection
+      logger.error('Transaction type detection failed', error);
+    }
+
     // Step 4: Save to Google Sheets
     debugLog.push('→ Step 4: Saving to Google Sheets');
     try {
@@ -138,6 +166,8 @@ export async function POST(request: Request) {
         merchant: parsedData.merchant,
         source: webhookRequest.app,
         sourceType,
+        transactionType: parsedData.transactionType,
+        details: parsedData.details,
       };
 
       await repository.appendTransaction(transaction);

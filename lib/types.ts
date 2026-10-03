@@ -10,6 +10,8 @@ export interface Transaction {
   merchant: string;
   source: string; // App name (Gmail, Telegram, etc.)
   sourceType?: string; // Source type (Email, Telegram, Viber, Bank, etc.)
+  transactionType?: string; // Payment, Transfer, Refund, etc.
+  details?: string; // Additional details (card number, reference, etc.)
 }
 
 export interface ParsedTransaction {
@@ -17,6 +19,8 @@ export interface ParsedTransaction {
   amount: number;
   currency: string;
   merchant: string;
+  transactionType?: string; // Payment, Transfer, Refund, etc.
+  details?: string; // Additional data: card number, reference, etc.
 }
 
 export interface WebhookRequest {

@@ -93,7 +93,9 @@ Extract the following information and return ONLY valid JSON (no markdown, no ex
   "category": "one of: ${categoriesStr}",
   "amount": number (0 if not found),
   "currency": "currency code like UAH, USD, EUR, GBP (or empty string if unknown)",
-  "merchant": "name of the business or service (or empty string if unknown)"
+  "merchant": "name of the business or service (or empty string if unknown)",
+  "transactionType": "Payment, Transfer, Refund, Withdrawal, Deposit, or Other",
+  "details": "any additional data like card number, reference, recipient (or empty string if none)"
 }`;
   }
 
@@ -113,6 +115,12 @@ Extract the following information and return ONLY valid JSON (no markdown, no ex
       }
       if (typeof parsed.merchant !== 'string') {
         parsed.merchant = '';
+      }
+      if (typeof parsed.transactionType !== 'string') {
+        parsed.transactionType = 'Other';
+      }
+      if (typeof parsed.details !== 'string') {
+        parsed.details = '';
       }
 
       // Ensure category is valid

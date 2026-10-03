@@ -50,7 +50,7 @@ export class SheetsRepository {
     try {
       this.validateTransaction(transaction);
 
-      // Column structure: Date | Category | Amount | Currency | Merchant | App | Source
+      // Column structure: Date | Category | Amount | Currency | Merchant | App | Source | TransactionType | Details
       const row = [
         transaction.date,
         transaction.category,
@@ -58,14 +58,16 @@ export class SheetsRepository {
         transaction.currency,
         transaction.merchant,
         transaction.source, // App (Gmail, Telegram, etc.)
-        transaction.sourceType || 'Other', // New: Source type (Email, Telegram, Viber, Bank, etc.)
+        transaction.sourceType || 'Other', // Source type (Email, Telegram, Viber, Bank, etc.)
+        transaction.transactionType || 'Other', // Transaction type (Payment, Transfer, Refund, etc.)
+        transaction.details || '', // Additional details (card, reference, etc.)
       ];
 
       this.debugLog.push(`→ Writing row: ${JSON.stringify(row)}`);
 
       const response = await this.sheets.spreadsheets.values.append({
         spreadsheetId: this.spreadsheetId,
-        range: 'Transactions!A:G',
+        range: 'Transactions!A:I',
         valueInputOption: 'USER_ENTERED',
         requestBody: {
           values: [row],
@@ -114,6 +116,14 @@ export class SheetsRepository {
 
     if (transaction.sourceType && typeof transaction.sourceType !== 'string') {
       errors.push('SourceType must be a string');
+    }
+
+    if (transaction.transactionType && typeof transaction.transactionType !== 'string') {
+      errors.push('TransactionType must be a string');
+    }
+
+    if (transaction.details && typeof transaction.details !== 'string') {
+      errors.push('Details must be a string');
     }
 
     if (errors.length > 0) {
