@@ -36,13 +36,22 @@ export async function POST(request: Request) {
             debugLog.push("Body text not found in URL params, attempting to parse request body");
             try {
                 const contentType = request.headers.get('content-type') || '';
+                debugLog.push(`Processing content-type: ${contentType}`);
                 
                 if (contentType.includes('application/json')) {
                     debugLog.push("Content-Type is JSON, parsing JSON body");
-                    const jsonBody = await request.json();
-                    debugLog.push(`JSON Body parsed: ${JSON.stringify(jsonBody).substring(0, 100)}`);
-                    bodyText = jsonBody.body || jsonBody.message || JSON.stringify(jsonBody);
-                    appName = appName || jsonBody.app || 'unknown';
+                    try {
+                        const jsonBody = await request.json();
+                        debugLog.push(`JSON Body parsed: ${JSON.stringify(jsonBody).substring(0, 100)}`);
+                        bodyText = jsonBody.body || jsonBody.message || JSON.stringify(jsonBody);
+                        appName = appName || jsonBody.app || 'unknown';
+                    } catch (jsonError) {
+                        debugLog.push(`Failed to parse JSON: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}`);
+                        debugLog.push("Falling back to text parsing");
+                        const text = await request.clone().text();
+                        debugLog.push(`Raw text length: ${text.length}, first 200 chars: ${text.substring(0, 200)}`);
+                        bodyText = text;
+                    }
                 } else if (contentType.includes('application/x-www-form-urlencoded')) {
                     debugLog.push("Content-Type is form-urlencoded, parsing form data");
                     const text = await request.text();
@@ -53,13 +62,16 @@ export async function POST(request: Request) {
                 } else if (contentType.includes('text/plain')) {
                     debugLog.push("Content-Type is text/plain, reading as text");
                     bodyText = await request.text();
-                    debugLog.push(`Text body: ${bodyText.substring(0, 100)}`);
+                    debugLog.push(`Text body length: ${bodyText.length}`);
                 } else {
-                    debugLog.push(`Unknown content-type: ${contentType}, attempting text parsing`);
-                    bodyText = await request.text();
+                    debugLog.push(`Unknown/empty content-type: "${contentType}", attempting text parsing`);
+                    const rawText = await request.text();
+                    debugLog.push(`Raw text length: ${rawText.length}, first 200 chars: ${rawText.substring(0, 200)}`);
+                    bodyText = rawText;
                 }
             } catch (parseBodyError) {
                 debugLog.push(`Error parsing request body: ${parseBodyError instanceof Error ? parseBodyError.message : String(parseBodyError)}`);
+                debugLog.push(`Stack: ${parseBodyError instanceof Error ? parseBodyError.stack : 'N/A'}`);
                 return NextResponse.json({
                     error: "Failed to parse request body",
                     debugLog,
