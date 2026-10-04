@@ -1,25 +1,11 @@
 /**
  * Transaction Analyzer Service
- * Handles AI-powered transaction analysis using Gemini
+ * Handles AI-powered transaction analysis with pluggable AI providers
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { buildAnalysisPrompt } from '@/lib/config/prompts';
+import { aiFactory } from '@/lib/ai/AIFactory';
+import { AnalysisError as AIAnalysisError } from '@/lib/ai/types';
 import { ParsedTransaction } from '../types';
-
-const TRANSACTION_CATEGORIES = [
-  'Дім',
-  'Одяг',
-  'Авто',
-  'Їжа й хозяйство',
-  'Освіта',
-  'Паливо',
-  'Комуналка',
-  'Розваги',
-  'Підписки',
-  'Здоров\'я',
-  'Інше'
-] as const;
 
 export class AnalysisError extends Error {
   constructor(message: string) {
@@ -29,116 +15,27 @@ export class AnalysisError extends Error {
 }
 
 export class TransactionAnalyzer {
-  private genAI: GoogleGenerativeAI;
   private debugLog: string[] = [];
-
-  constructor(apiKey?: string) {
-    const key = apiKey || process.env.GEMINI_API_KEY;
-    if (!key) {
-      throw new Error('GEMINI_API_KEY environment variable is not set');
-    }
-    this.genAI = new GoogleGenerativeAI(key);
-  }
 
   async analyze(bodyText: string): Promise<ParsedTransaction> {
     this.debugLog = [];
     this.debugLog.push('=== Transaction Analysis Started ===');
 
     try {
-      const sanitized = this.sanitizeForAnalysis(bodyText);
-      this.debugLog.push(`✓ Sanitized text: ${sanitized.substring(0, 80)}...`);
+      // Use AI Factory with pluggable providers and fallback logic
+      const result = await aiFactory.analyze(bodyText);
 
-      const prompt = this.buildPrompt(sanitized);
-      this.debugLog.push('→ Calling Gemini API...');
-
-      const model = this.genAI.getGenerativeModel({
-        model: 'gemini-flash-lite-latest',
-        generationConfig: { responseMimeType: 'application/json' }
-      });
-
-      const result = await model.generateContent(prompt);
-      const responseText = result.response.text();
-      this.debugLog.push(`← Gemini response received: ${responseText.substring(0, 100)}...`);
-
-      const parsed = this.parseGeminiResponse(responseText);
-      this.debugLog.push('✓ Successfully parsed Gemini response');
-
-      return parsed;
-    } catch (error) {
+      // Merge AI provider's debug log with transaction analyzer's log
+      this.debugLog.push(...result.debugLog);
       this.debugLog.push(
-        `❌ Analysis error: ${error instanceof Error ? error.message : 'Unknown error'}`
+        `💰 Cost: $${result.cost.costUSD.toFixed(6)} (${result.cost.provider}/${result.cost.model})`
       );
-      throw new AnalysisError(
-        error instanceof Error ? error.message : 'Failed to analyze transaction'
-      );
-    }
-  }
 
-  private sanitizeForAnalysis(text: string): string {
-    return text
-      .replace(/[\r\n]+/g, ' ') // Replace newlines with spaces
-      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove control characters
-      .replace(/\s+/g, ' ') // Normalize multiple spaces
-      .trim();
-  }
-
-  private buildPrompt(text: string): string {
-    return buildAnalysisPrompt(text, TRANSACTION_CATEGORIES);
-  }
-
-  private parseGeminiResponse(responseText: string): ParsedTransaction {
-    try {
-      const parsed = JSON.parse(responseText);
-
-      // Check if this is actually a transaction
-      if (parsed.isTransaction === false) {
-        this.debugLog.push('⚠ Gemini determined this is not a transaction');
-        // Return a marker that this is not a transaction
-        return {
-          category: 'Інше',
-          amount: 0,
-          currency: '',
-          merchant: '',
-          transactionType: 'Other',
-          details: 'NOT_A_TRANSACTION',
-        } as ParsedTransaction;
-      }
-
-      // Validate required fields exist
-      if (typeof parsed.category !== 'string') {
-        parsed.category = 'Інше';
-      }
-      if (typeof parsed.amount !== 'number') {
-        parsed.amount = 0;
-      }
-      if (typeof parsed.currency !== 'string') {
-        parsed.currency = '';
-      }
-      if (typeof parsed.merchant !== 'string') {
-        parsed.merchant = '';
-      }
-      if (typeof parsed.transactionType !== 'string') {
-        parsed.transactionType = 'Other';
-      }
-      if (typeof parsed.details !== 'string') {
-        parsed.details = '';
-      }
-
-      // Ensure category is valid
-      if (!TRANSACTION_CATEGORIES.includes(parsed.category as any)) {
-        parsed.category = 'Інше';
-      }
-
-      // Ensure amount is non-negative
-      if (parsed.amount < 0) {
-        parsed.amount = 0;
-      }
-
-      return parsed as ParsedTransaction;
+      return result.data;
     } catch (error) {
-      throw new AnalysisError(
-        `Invalid JSON from Gemini: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.debugLog.push(`❌ Analysis error: ${message}`);
+      throw new AnalysisError(message);
     }
   }
 

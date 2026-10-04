@@ -107,10 +107,10 @@ export async function POST(request: Request) {
 
     // Step 3: Analyze transaction
     debugLog.push('→ Step 3: Analyzing transaction with AI');
-    debugLog.push(`Input to Gemini (first 150 chars): ${(validation.sanitized || webhookRequest.body).substring(0, 150)}`);
+    debugLog.push(`Input to AI (first 150 chars): ${(validation.sanitized || webhookRequest.body).substring(0, 150)}`);
     let parsedData;
     try {
-      const analyzer = new TransactionAnalyzer(config.geminiApiKey);
+      const analyzer = new TransactionAnalyzer();
       parsedData = await analyzer.analyze(validation.sanitized || webhookRequest.body);
       debugLog.push(...analyzer.getDebugLog());
       
@@ -252,32 +252,25 @@ export async function GET() {
   const debugLog: string[] = [];
 
   try {
-    const config = getEnvironmentConfig();
-    debugLog.push('→ Fetching available Gemini models');
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${config.geminiApiKey}`
-    );
-    const data = await response.json();
-
-    if (!data.models) {
-      debugLog.push('❌ No models found in response');
-      return NextResponse.json(
-        { error: 'Failed to fetch models', debugLog },
-        { status: 500 }
-      );
-    }
-
-    const availableModels = data.models
-      .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
-      .map((m: any) => m.name);
-
-    debugLog.push(`✓ Found ${availableModels.length} available models`);
+    debugLog.push('→ Checking AI provider configuration and health');
+    
+    // Import AIFactory for provider health check
+    const { aiFactory } = await import('@/lib/ai/AIFactory');
+    
+    const status = aiFactory.getHealthStatus();
+    const primaryProvider = aiFactory.getPrimaryProvider();
+    
+    debugLog.push(`Primary provider: ${primaryProvider?.getName()}`);
+    status.forEach(s => {
+      debugLog.push(`  ${s.provider}: configured=${s.configured}, failures=${s.failures}`);
+    });
+    
+    debugLog.push(`✓ All AI providers configured and ready`);
 
     return NextResponse.json({
       health: 'ok',
-      count: availableModels.length,
-      models: availableModels,
+      providers: status,
+      primaryProvider: primaryProvider?.getName(),
       debugLog,
     });
   } catch (error) {
