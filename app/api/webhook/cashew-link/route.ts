@@ -10,6 +10,7 @@
 import { NextResponse } from 'next/server';
 import { TransactionAnalyzer } from '@/lib/services/transactionAnalyzer';
 import { generateCashewLink } from '@/lib/services/cashewLinkGenerator';
+import { mapTransaction } from '@/lib/services/accountMapper';
 import { Logger, Timer } from '@/lib/utils/errorHandler';
 import { validateAndSanitize } from '@/lib/utils/validation';
 
@@ -165,7 +166,6 @@ export async function POST(request: Request) {
 
     // Apply account and category mapping for response
     debugLog.push('→ Applying account/category constraints');
-    const { mapTransaction } = await import('@/lib/services/accountMapper');
     const mapping = mapTransaction('Default', parsedData.category);
     debugLog.push(`✓ Category mapped: "${parsedData.category}" → "${mapping.category}"`);
 
