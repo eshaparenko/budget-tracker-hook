@@ -15,7 +15,7 @@ export interface MappingResult {
 
 /**
  * Map account name using Cashew configuration
- * If account is in CASHEW_ACCOUNTS array, use it directly
+ * If account is in CASHEW_ACCOUNTS array (case-insensitive), use the exact config name
  * If not in array or empty, use first account from array as default
  * If no accounts configured, use account name as-is (passthrough)
  */
@@ -33,9 +33,15 @@ export function mapAccount(accountName: string): { mapped: string; isMapped: boo
     return { mapped: config.accounts[0], isMapped: true };
   }
 
-  // Check if provided account name is in the allowed list
-  if (config.accounts.includes(accountName)) {
-    return { mapped: accountName, isMapped: false };
+  // Check if provided account name is in the allowed list (case-insensitive)
+  const lowerAccountName = accountName.toLowerCase();
+  const matchedAccount = config.accounts.find(
+    acc => acc.toLowerCase() === lowerAccountName
+  );
+
+  if (matchedAccount) {
+    // Use the exact account name from config
+    return { mapped: matchedAccount, isMapped: false };
   }
 
   // Account not in allowed list - use first account as fallback
@@ -109,7 +115,7 @@ export function getAllowedCategories(): string[] {
 }
 
 /**
- * Validate if account exists in configuration
+ * Validate if account exists in configuration (case-insensitive)
  * If no accounts configured, any account is valid (passthrough)
  * If accounts configured, check if account is in the allowed list
  */
@@ -119,8 +125,14 @@ export function isValidAccount(accountName: string): boolean {
   }
 
   const config = getCashewConfig();
-  // Valid if in the allowed list OR if no accounts configured (passthrough mode)
-  return config.accounts.length === 0 || config.accounts.includes(accountName);
+  
+  // Valid if in the allowed list (case-insensitive) OR if no accounts configured (passthrough mode)
+  if (config.accounts.length === 0) {
+    return true;
+  }
+
+  const lowerAccountName = accountName.toLowerCase();
+  return config.accounts.some(acc => acc.toLowerCase() === lowerAccountName);
 }
 
 /**

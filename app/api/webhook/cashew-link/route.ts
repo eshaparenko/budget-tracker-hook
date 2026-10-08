@@ -142,11 +142,12 @@ export async function POST(request: Request) {
       );
     }
 
-    // Generate Cashew link
+    // Generate Cashew link with app/account option
     debugLog.push('→ Generating Cashew link');
     let link;
     try {
-      link = generateCashewLink(parsedData);
+      // Pass app name as account for internal mapping; Cashew URL will still use 'Default'
+      link = generateCashewLink(parsedData, { account: app });
       debugLog.push(`✓ Link generated (${link.length} chars)`);
       logger.log('Cashew link generated', { duration: timer.elapsedMs() });
     } catch (error) {
@@ -166,7 +167,8 @@ export async function POST(request: Request) {
 
     // Apply account and category mapping for response
     debugLog.push('→ Applying account/category constraints');
-    const mapping = mapTransaction('Default', parsedData.category);
+    // Map the provided account/app name
+    const mapping = mapTransaction(app, parsedData.category);
     debugLog.push(`✓ Category mapped: "${parsedData.category}" → "${mapping.category}"`);
 
     // Return success response
