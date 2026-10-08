@@ -147,7 +147,9 @@ export function formatCurrencyCode(currency: string): string {
 }
 
 /**
- * Format date for Cashew link (YYYY-MM-DD format)
+ * Format date for Cashew link (yyyy-MM-dd HH:mm:ss format)
+ * Cashew accepts full datetime format, not just date
+ * Reference: https://github.com/jameskokoska/Cashew/blob/5.2.3%2B328/budget/lib/struct/commonDateFormats.dart
  */
 export function formatDateForCashew(date: Date | string): string {
   let dateObj: Date;
@@ -166,8 +168,12 @@ export function formatDateForCashew(date: Date | string): string {
   const year = dateObj.getFullYear();
   const month = String(dateObj.getMonth() + 1).padStart(2, '0');
   const day = String(dateObj.getDate()).padStart(2, '0');
+  const hours = String(dateObj.getHours()).padStart(2, '0');
+  const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+  const seconds = String(dateObj.getSeconds()).padStart(2, '0');
 
-  return `${year}-${month}-${day}`;
+  // Format: yyyy-MM-dd HH:mm:ss (supported by Cashew)
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
 /**
