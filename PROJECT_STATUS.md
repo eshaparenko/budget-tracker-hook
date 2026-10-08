@@ -234,7 +234,7 @@ Extracts and stores:
 
 ---
 
-### 🧪 Test Coverage (165 Tests - Up from 114)
+### 🧪 Test Coverage (209 Tests - All Passing)
 
 **Test Files:**
 - `lib/services/__tests__/amountExtractor.test.ts` (14 tests)
@@ -253,7 +253,7 @@ Extracts and stores:
 
 - `lib/services/__tests__/accountMapper.test.ts` (17 tests) **NEW**
   - Account mapping with config
-  - Category mapping with passthrough
+  - Category validation (array-based, no lang-to-lang mapping)
   - Validation of accounts/categories
   - Unicode and case-sensitivity handling
 
@@ -261,8 +261,8 @@ Extracts and stores:
   - Cashew link generation
   - URL encoding (special chars, Unicode, Cyrillic)
   - Transaction validation
-  - HTML generation
-  - Multiple response formats
+  - Multiple response formats (URL, JSON, HTML)
+  - Date formatting and encoding
 
 - `lib/ai/__tests__/CostTracker.test.ts` (16 tests)
   - Cost calculation accuracy
@@ -436,80 +436,128 @@ GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
 
 ## ✅ What's Working
 
-1. ✅ **Webhook endpoint** receives notifications and processes with pluggable AI
-2. ✅ **Amount extraction** (symbol-based + AI fallback)
-3. ✅ **AI analysis** with provider switching (Gemini primary, Claude/OpenAI fallback)
-4. ✅ **Intent detection** (rejects action requests)
-5. ✅ **Multi-currency** support (all ISO 4217)
-6. ✅ **Google Sheets storage** (9 enriched columns)
-7. ✅ **Error handling** (comprehensive logging)
-8. ✅ **Unit tests** (114 passing, 4 test suites)
-9. ✅ **Debug mode** (`?debug=true` parameter)
-10. ✅ **Cost tracking** (per-provider cost monitoring)
-11. ✅ **Fallback logic** (automatic provider switching)
-12. ✅ **Configuration validation** (environment config)
-13. ✅ **Build & Type Safety** (TypeScript, Next.js)
+1. ✅ **Webhook endpoints** - Two production-ready endpoints (hook-with-params, cashew-link)
+2. ✅ **MacroDroid integration** - Accepts app + body notification parameters
+3. ✅ **AI analysis** - Gemini with Claude/OpenAI fallback
+4. ✅ **Amount extraction** (symbol-based + AI fallback)
+5. ✅ **Intent detection** (rejects action requests)
+6. ✅ **Multi-currency** support (all ISO 4217)
+7. ✅ **Google Sheets storage** (9 enriched columns)
+8. ✅ **Cashew link generation** (with account/category mapping)
+9. ✅ **Error handling** (comprehensive logging)
+10. ✅ **Unit tests** (209 passing, 9 test suites)
+11. ✅ **Debug mode** (`?debug=true` parameter with detailed logging)
+12. ✅ **Cost tracking** (per-provider cost monitoring)
+13. ✅ **Fallback logic** (automatic provider switching)
+14. ✅ **Configuration validation** (environment config)
+15. ✅ **Build & Type Safety** (TypeScript, Next.js)
+16. ✅ **URL encoding** (special chars, Unicode, Cyrillic support)
+17. ✅ **JSON response format** (matching hook-with-params pattern)
 
 ---
 
 ### 📱 Cashew App Integration (NEW - October 4, 2026)
 
-**Status:** ✅ Complete - Ready for use
+**Status:** ✅ Complete - Production Ready
 
-A new webhook endpoint that generates Cashew app-links for quick transaction logging:
+A new webhook endpoint that generates Cashew app-links from MacroDroid transaction notifications:
 
 ```
 GET/POST /api/webhook/cashew-link
 ```
 
 **Features:**
-- ✅ Generate Cashew app-links from transaction text
-- ✅ Configurable account mappings (`.env.local`)
-- ✅ Configurable category mappings (English names for international use)
-- ✅ Support multiple response formats: URL (default), JSON, HTML
+- ✅ Accepts MacroDroid notifications (app + body parameters)
+- ✅ Analyzes with Gemini AI (with fallback to Claude/OpenAI)
+- ✅ Generates Cashew app-links for quick transaction logging
+- ✅ Returns JSON response with optional debug logging
+- ✅ Supports account mappings (configurable in `.env.local`)
+- ✅ Validates categories (array-based, no language-to-language mapping)
 - ✅ Multi-currency support (all ISO 4217)
 - ✅ URL encoding for special characters and Unicode
-- ✅ Graceful fallback if config missing (passthrough mode)
 
 **Usage Example:**
 ```bash
-# Generate link with default format (URL)
-curl "http://localhost:3000/api/webhook/cashew-link?body=500%20UAH%20to%20Starbucks"
+# Simple request - returns success URL and transaction details
+curl "http://localhost:3000/api/webhook/cashew-link?app=Gmail&body=500%20UAH%20Starbucks"
 
-# Generate with JSON response
-curl "http://localhost:3000/api/webhook/cashew-link?body=500%20UAH%20coffee&format=json"
+# With debug logging
+curl "http://localhost:3000/api/webhook/cashew-link?app=Telegram&body=150%20EUR%20coffee&debug=true"
 
-# Generate HTML link for email
-curl "http://localhost:3000/api/webhook/cashew-link?body=150%20EUR%20shop&format=html"
-
-# Override account
-curl "http://localhost:3000/api/webhook/cashew-link?body=500%20UAH&account=Monobank&format=json"
+# Response with debug=true
+{
+  "success": true,
+  "url": "https://cashewapp.web.app/addTransaction?amount=500&category=%D0%9F%D0%BE%D0%BA%D1%83%D0%BF%D0%BA%D0%B8&merchant=Starbucks&currency=UAH&date=2026-10-04",
+  "transaction": {
+    "amount": 500,
+    "category": "Покупки",
+    "merchant": "Starbucks",
+    "currency": "UAH"
+  },
+  "debugLog": [
+    "=== Cashew Link Generator Started ===",
+    "Debug mode: ENABLED",
+    "App: Gmail",
+    "→ Sanitizing input",
+    "✓ Body sanitized: \"500 UAH Starbucks...\"",
+    "→ Analyzing transaction with AI",
+    "✓ Analysis complete: 500 UAH → Покупки",
+    "→ Generating Cashew link",
+    "✓ Link generated (185 chars)",
+    "✓ Request completed in 2345ms"
+  ]
+}
 ```
 
 **Configuration:**
 ```bash
 # .env.local
 
-# Account mappings (custom per deployment)
-CASHEW_ACCOUNTS='{"Mono":"Monobank","Privat":"PrivatBank"}'
+# Account name mappings (optional, local-only config)
+# Maps app account names to Cashew account names
+CASHEW_ACCOUNTS='{"Mono":"Monobank","Privat":"PrivatBank","Default":"My Wallet"}'
 
-# Category mappings (English for international use)
-CASHEW_CATEGORIES='{
-  "Їжа й хозяйство": "Food & Groceries",
-  "Покупки": "Shopping",
-  "Розваги": "Entertainment"
-}'
+# Category validation array (optional, no language mapping)
+# If set, AI must match one of these category names
+# If empty/missing, AI returns any category name
+CASHEW_CATEGORIES='["Їжа й хозяйство","Покупки","Розваги","Транспорт","Комунальні послуги","Навчання","Здоров\'я","Розетроби","Подорожі","Розваги","Інше"]'
 ```
 
-**Services:**
-- `CashewConfigLoader` - Load config from `.env.local` with validation
-- `AccountMapper` - Map accounts/categories with passthrough fallback
-- `CashewLinkGenerator` - Generate valid Cashew app-links
-- `URLEncoder` - Handle URL encoding for special characters and Unicode
+**Implementation:**
+- `CashewConfigLoader` - Load and validate config from `.env.local`
+- `AccountMapper` - Map accounts/categories with fallback
+- `CashewLinkGenerator` - Generate valid Cashew app-links with date
+- `URLEncoder` - Handle URL encoding for special characters, Cyrillic text
+- Endpoint: `app/api/webhook/cashew-link/route.ts` (GET/POST)
+
+**Response Format:**
+```json
+{
+  "success": true,
+  "url": "https://cashewapp.web.app/addTransaction?...",
+  "transaction": {
+    "amount": 500,
+    "category": "Їжа й хозяйство",
+    "merchant": "Starbucks",
+    "currency": "UAH"
+  },
+  "debugLog": [...]  // Only if debug=true
+}
+```
+
+**Integration with MacroDroid:**
+1. MacroDroid receives SMS/notification from bank
+2. Triggers HTTP request: `GET /api/webhook/cashew-link?app=Bank&body=500%20UAH%20payment`
+3. Budget tracker analyzes with Gemini AI
+4. Returns Cashew app-link URL
+5. MacroDroid opens link in Cashew app
+6. User taps "Add Transaction" - payment logged instantly
 
 **Tests:**
-- 51 new tests for Cashew services (CashewConfigLoader: 9, AccountMapper: 17, CashewLinkGenerator: 25)
-- Happy path, edge cases, Unicode handling, error scenarios all covered
+- 51 new tests (CashewConfigLoader: 9, AccountMapper: 17, CashewLinkGenerator: 25)
+- All passing, covering happy path, edge cases, Unicode, error scenarios
+
+**Total Project Tests:** 209 passing
 
 ---
 
@@ -608,15 +656,17 @@ tail -100 .ai-costs.json
 
 | Metric | Value |
 |--------|-------|
-| Total Lines of Code | ~3,200+ |
-| Test Coverage | 165 passing tests |
+| Total Lines of Code | ~4,200+ |
+| Test Coverage | 209 passing tests (all passing) |
+| Test Files | 9 test suites |
 | AI Providers Supported | 3 (Gemini, Claude, OpenAI) |
 | Fallback Chains | Unlimited (configurable) |
 | Transaction Categories | 11 predefined |
 | Currencies Supported | All ISO 4217 |
 | Build Time | ~15s |
-| Test Suite Time | ~3.2s |
-| Cashew Endpoints | 1 (GET/POST /api/webhook/cashew-link) |
+| Test Suite Time | ~3.8s |
+| Webhook Endpoints | 2 (hook-with-params, cashew-link) |
+| Core Services | 8 services (Analyzer, AmountExtractor, TransactionTypeDetector, CashewConfigLoader, AccountMapper, CashewLinkGenerator, CostTracker, RequestParser) |
 
 ---
 
