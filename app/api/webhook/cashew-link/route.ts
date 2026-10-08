@@ -163,6 +163,12 @@ export async function POST(request: Request) {
       );
     }
 
+    // Apply account and category mapping for response
+    debugLog.push('→ Applying account/category constraints');
+    const { mapTransaction } = await import('@/lib/services/accountMapper');
+    const mapping = mapTransaction('Default', parsedData.category);
+    debugLog.push(`✓ Category mapped: "${parsedData.category}" → "${mapping.category}"`);
+
     // Return success response
     debugLog.push(`✓ Request completed in ${timer.elapsedMs()}ms`);
     
@@ -172,7 +178,7 @@ export async function POST(request: Request) {
         url: link,
         transaction: {
           amount: parsedData.amount,
-          category: parsedData.category,
+          category: mapping.category, // Use constrained category
           merchant: parsedData.merchant,
           currency: parsedData.currency,
         },
