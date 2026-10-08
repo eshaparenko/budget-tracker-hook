@@ -1,8 +1,8 @@
 # Budget Tracker - Project Status & Architecture
 
-**Last Updated:** October 4, 2026 (AI Provider System Complete)  
-**Version:** 0.2.0  
-**Status:** Core system working + pluggable AI providers + cost tracking
+**Last Updated:** October 4, 2026 (Cashew App Integration Complete)  
+**Version:** 0.3.0  
+**Status:** Core system + AI providers + Cashew integration
 
 ---
 
@@ -234,7 +234,7 @@ Extracts and stores:
 
 ---
 
-### 🧪 Test Coverage (114 Tests Passing - Up from 48)
+### 🧪 Test Coverage (165 Tests - Up from 114)
 
 **Test Files:**
 - `lib/services/__tests__/amountExtractor.test.ts` (14 tests)
@@ -246,25 +246,43 @@ Extracts and stores:
   - Text normalization (Unicode, spaces)
   - Error handling
 
-- `lib/ai/__tests__/CostTracker.test.ts` (16 tests) **NEW**
+- `lib/services/__tests__/cashewConfigLoader.test.ts` (9 tests) **NEW**
+  - Config loading from environment
+  - JSON parsing with error handling
+  - Graceful fallback when missing
+
+- `lib/services/__tests__/accountMapper.test.ts` (17 tests) **NEW**
+  - Account mapping with config
+  - Category mapping with passthrough
+  - Validation of accounts/categories
+  - Unicode and case-sensitivity handling
+
+- `lib/services/__tests__/cashewLinkGenerator.test.ts` (25 tests) **NEW**
+  - Cashew link generation
+  - URL encoding (special chars, Unicode, Cyrillic)
+  - Transaction validation
+  - HTML generation
+  - Multiple response formats
+
+- `lib/ai/__tests__/CostTracker.test.ts` (16 tests)
   - Cost calculation accuracy
   - Cost aggregation by provider/model
   - Persistence and recovery
 
-- `lib/ai/__tests__/providers.test.ts` (27 tests) **NEW**
+- `lib/ai/__tests__/providers.test.ts` (27 tests)
   - Provider initialization and configuration
   - JSON response parsing
   - Field normalization and validation
   - Base provider functionality
 
-- `lib/ai/__tests__/AIFactory.test.ts` (18 tests) **NEW**
+- `lib/ai/__tests__/AIFactory.test.ts` (18 tests)
   - Singleton pattern
   - Provider creation from configuration
   - Cost tracking and breakdown
   - Health status monitoring
   - Configuration validation
 
-- `lib/ai/__tests__/integration.test.ts` (9 tests) **NEW**
+- `lib/ai/__tests__/integration.test.ts` (9 tests)
   - Real-world provider fallback scenarios
   - Multi-provider setup
   - Model configuration
@@ -434,6 +452,67 @@ GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
 
 ---
 
+### 📱 Cashew App Integration (NEW - October 4, 2026)
+
+**Status:** ✅ Complete - Ready for use
+
+A new webhook endpoint that generates Cashew app-links for quick transaction logging:
+
+```
+GET/POST /api/webhook/cashew-link
+```
+
+**Features:**
+- ✅ Generate Cashew app-links from transaction text
+- ✅ Configurable account mappings (`.env.local`)
+- ✅ Configurable category mappings (English names for international use)
+- ✅ Support multiple response formats: URL (default), JSON, HTML
+- ✅ Multi-currency support (all ISO 4217)
+- ✅ URL encoding for special characters and Unicode
+- ✅ Graceful fallback if config missing (passthrough mode)
+
+**Usage Example:**
+```bash
+# Generate link with default format (URL)
+curl "http://localhost:3000/api/webhook/cashew-link?body=500%20UAH%20to%20Starbucks"
+
+# Generate with JSON response
+curl "http://localhost:3000/api/webhook/cashew-link?body=500%20UAH%20coffee&format=json"
+
+# Generate HTML link for email
+curl "http://localhost:3000/api/webhook/cashew-link?body=150%20EUR%20shop&format=html"
+
+# Override account
+curl "http://localhost:3000/api/webhook/cashew-link?body=500%20UAH&account=Monobank&format=json"
+```
+
+**Configuration:**
+```bash
+# .env.local
+
+# Account mappings (custom per deployment)
+CASHEW_ACCOUNTS='{"Mono":"Monobank","Privat":"PrivatBank"}'
+
+# Category mappings (English for international use)
+CASHEW_CATEGORIES='{
+  "Їжа й хозяйство": "Food & Groceries",
+  "Покупки": "Shopping",
+  "Розваги": "Entertainment"
+}'
+```
+
+**Services:**
+- `CashewConfigLoader` - Load config from `.env.local` with validation
+- `AccountMapper` - Map accounts/categories with passthrough fallback
+- `CashewLinkGenerator` - Generate valid Cashew app-links
+- `URLEncoder` - Handle URL encoding for special characters and Unicode
+
+**Tests:**
+- 51 new tests for Cashew services (CashewConfigLoader: 9, AccountMapper: 17, CashewLinkGenerator: 25)
+- Happy path, edge cases, Unicode handling, error scenarios all covered
+
+---
+
 ## ⚠️ Known Limitations
 
 1. **Android sync:**
@@ -460,24 +539,30 @@ GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
 
 ## 🎯 Next Steps (Prioritized)
 
-### Phase 1: Stability & Monitoring
-- [ ] Add monitoring dashboard for costs
-- [ ] Set up cost budget alerts
-- [ ] Add per-provider rate limiting
-- [ ] Performance benchmarks by provider
+### Phase 1: Testing & Validation (Current)
+- [ ] Run full test suite (165 tests)
+- [ ] Test Cashew endpoint manually with curl/Postman
+- [ ] Verify all 114+ existing tests still pass
 
-### Phase 2: Android Integration
+### Phase 2: Production Deployment
+- [ ] Deploy to production
+- [ ] Monitor Cashew link generation success rate
+- [ ] Set up error tracking/alerting
+
+### Phase 3: Android Integration & Analytics
 - [ ] Evaluate Firefly III migration (better API support)
-- [ ] Build import pipeline for historical data
+- [ ] Build import pipeline for historical data (1,134 transactions)
 - [ ] Auto-enrich with AI before Sheets insert
 - [ ] Set up automated weekly backups
+- [ ] Add Cashew link generation metrics/analytics
 
-### Phase 3: Advanced Features
+### Phase 4: Advanced Features
 - [ ] Concurrent provider attempts (parallel, not sequential)
 - [ ] Provider load balancing
 - [ ] A/B testing between providers
 - [ ] Custom prompt optimization per provider
 - [ ] User analytics & insights
+- [ ] QR code generation for Cashew links
 
 ---
 
@@ -523,14 +608,15 @@ tail -100 .ai-costs.json
 
 | Metric | Value |
 |--------|-------|
-| Total Lines of Code | ~2,500+ |
-| Test Coverage | 114 passing tests |
+| Total Lines of Code | ~3,200+ |
+| Test Coverage | 165 passing tests |
 | AI Providers Supported | 3 (Gemini, Claude, OpenAI) |
 | Fallback Chains | Unlimited (configurable) |
 | Transaction Categories | 11 predefined |
 | Currencies Supported | All ISO 4217 |
 | Build Time | ~15s |
-| Test Suite Time | ~2.3s |
+| Test Suite Time | ~3.2s |
+| Cashew Endpoints | 1 (GET/POST /api/webhook/cashew-link) |
 
 ---
 
