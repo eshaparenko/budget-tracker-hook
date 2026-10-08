@@ -104,85 +104,73 @@ https://cashewapp.web.app/addTransaction?amount=500&category=Food%20%26%20Grocer
 
 Stored locally in `.env.local` as JSON. Supports any bank or financial account worldwide:
 
-**Ukrainian Banks Example:**
+**Ukrainian Banks Example (Array Format - No Mapping):**
 ```bash
-# .env.local
-CASHEW_ACCOUNTS='{
-  "Ukrsib": "UkrSibbank",
-  "Mono": "Monobank",
-  "Privat": "PrivatBank",
-  "Ukrsib EUR": "UkrSibbank EUR",
-  "Privat EUR": "PrivatBank EUR"
-}'
+# .env.local - Simple array of allowed accounts
+CASHEW_ACCOUNTS='["Mono", "Privat", "Ukrsib"]'
 ```
+
+When AI can't parse account or returns unmapped account → Uses first account (`Mono`) as default.
 
 **US Banks Example:**
 ```bash
-CASHEW_ACCOUNTS='{
-  "Checking": "Wells Fargo Checking",
-  "Savings": "Chase Savings",
-  "AmEx": "American Express",
-  "Investment": "Fidelity Brokerage",
-  "HSA": "HSA Bank"
-}'
+CASHEW_ACCOUNTS='["Wells Fargo", "Chase", "AmEx", "Fidelity", "HSA"]'
 ```
 
 **European Banks Example:**
 ```bash
-CASHEW_ACCOUNTS='{
-  "ING": "ING Orange Account",
-  "Revolut": "Revolut EUR",
-  "Wise": "Wise Multi-Currency",
-  "Bunq": "Bunq Easy Bank",
-  "N26": "N26 Checking"
-}'
+CASHEW_ACCOUNTS='["ING", "Revolut", "Wise", "Bunq", "N26"]'
 ```
 
 **Multi-Currency Example:**
 ```bash
-CASHEW_ACCOUNTS='{
-  "UAH Checking": "UkrSibbank UAH",
-  "EUR Savings": "ING Europe EUR",
-  "USD Investment": "Fidelity USD",
-  "BTC Wallet": "Crypto Wallet BTC",
-  "Card": "Visa Debit Card"
-}'
+CASHEW_ACCOUNTS='["UAH Account", "EUR Account", "USD Account", "BTC Wallet", "Card"]'
 ```
 
 **Configuration:**
-- Key: Budget tracker account name (internal identifier)
-- Value: Cashew account name (what Cashew app expects)
+- JSON array of account names
+- Accounts must match exactly (case-sensitive)
+- No mapping - values used directly in Cashew app
+- First account used as default if AI can't parse
+- Leave empty to accept any account name (passthrough mode)
 - Fully customizable per user deployment
-- Loaded at runtime via `CashewConfigLoader`
-- No restrictions on account types: banks, wallets, cards, crypto, etc.
-- Can map any local name to any international account name
 
 ---
 
-### Category Handling (Configurable - Any Language)
+### Category Handling (Enforced - Any Language)
 
-Stored locally in `.env.local` as JSON array of allowed category names. Categories can be in any language:
+Stored locally in `.env.local` as JSON array of allowed category names. If category not in list, defaults to first category.
 
+**Ukrainian categories example:**
 ```bash
-# .env.local - Ukrainian categories (example)
+# .env.local - Ukrainian categories
 CASHEW_CATEGORIES='["Побут", "Покупки", "Розваги", "Рахунки та засоби", "Подарунки", "Освіта", "Здоров\'я", "Підписки", "Доходи", "Краса", "Подорожі", "Донати", "Авто", "Транспорт", "Будинок"]'
 ```
 
-Or in English:
+**English categories example:**
 ```bash
 # Alternative: English categories
 CASHEW_CATEGORIES='["Food & Groceries", "Shopping", "Entertainment", "Bills & Utilities", "Gifts", "Education", "Health & Medical", "Subscriptions", "Income", "Beauty", "Travel", "Donations", "Automotive", "Transportation", "Home & Housing"]'
 ```
 
+**Minimal example:**
+```bash
+# Just 3 categories - AI returns one of these
+CASHEW_CATEGORIES='["Food", "Shopping", "Other"]'
+```
+
 **Configuration:**
-- Array of category names (any language supported)
-- If `CASHEW_CATEGORIES` not configured: AI returns categories in detected language
-- If configured: Only categories in the list are accepted
+- JSON array of category names (any language supported)
+- If AI returns category NOT in list: Use first category as default
+- Ensures transaction categories are consistent with your Cashew app
+- Leave empty to accept categories in any language (AI determines, no mapping)
 - Fully customizable per user deployment
 
-**Without configuration** (recommended):
-- Skip `CASHEW_CATEGORIES` entirely
-- AI will detect and return category names in the transaction's language
+**Behavior:**
+- If `CASHEW_CATEGORIES` not configured: AI returns categories in detected language
+- If configured: Only categories in the list are used (AI's choice replaced with first if not found)
+- NO language-to-language mapping: Just a whitelist of allowed values
+
 - English transaction → English categories (Food, Shopping, etc.)
 - Ukrainian transaction → Ukrainian categories (Побут, Покупки, etc.)
 - Any language works ✅
