@@ -88,11 +88,11 @@ export function generateCashewLink(
     const notes = truncateString(transaction.transactionType || '', 200);
 
     // Build query parameters
-    // NOTE: Use 'Default' for account in URL - Cashew app may not recognize custom account names from URL params
+    // Use mapped account name (internally referred to as 'wallet' in Cashew)
     const params: Record<string, string | number> = {
       amount: parseFloat(formattedAmount),
       category: mapping.category,
-      account: 'Default',  // Always use Default for URL compatibility with Cashew app
+      wallet: mapping.account,  // Use the mapped account name (Cashew internally uses 'wallet')
       title,
     };
 

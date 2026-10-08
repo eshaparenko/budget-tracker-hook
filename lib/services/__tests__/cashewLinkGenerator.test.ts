@@ -119,18 +119,18 @@ describe('CashewLinkGenerator', () => {
       const transaction = createTransaction();
       const link = generateCashewLink(transaction, { account: 'Mono' });
 
-      // Cashew URL always uses 'Default' for account (Cashew app limitation)
-      expect(link).toContain('account=Default');
+      // Cashew uses 'wallet' parameter for account (internally referred to as wallet in code)
+      expect(link).toContain('wallet=Mono');
     });
 
-    test('should use Default account in URL regardless of config', () => {
+    test('should use mapped account in wallet parameter', () => {
       process.env.CASHEW_ACCOUNTS = JSON.stringify(['Mono', 'Privat']);
 
       const transaction = createTransaction();
-      // Even when account is provided, Cashew app only accepts 'Default'
+      // When account is provided and in config, use it in wallet parameter
       const link = generateCashewLink(transaction, { account: 'Privat' });
 
-      expect(link).toContain('account=Default');
+      expect(link).toContain('wallet=Privat');
     });
 
     test('should validate category when config provided', () => {

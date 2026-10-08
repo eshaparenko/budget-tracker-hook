@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-08T20:53:49.090Z",
+  "date": "2026-10-08T20:57:33.621Z",
   "records": [
     {
       "provider": "gemini",
@@ -117,7 +117,52 @@
       "costUSD": 0.00006652499999999999,
       "totalTokens": 683,
       "timestamp": "2026-10-08T20:53:49.090Z"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-flash-lite-latest",
+      "inputTokens": 617,
+      "outputTokens": 70,
+      "costUSD": 0.000067275,
+      "totalTokens": 687,
+      "timestamp": "2026-10-08T20:54:27.388Z"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-flash-lite-latest",
+      "inputTokens": 609,
+      "outputTokens": 56,
+      "costUSD": 0.00006247499999999999,
+      "totalTokens": 665,
+      "timestamp": "2026-10-08T20:54:41.888Z"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-flash-lite-latest",
+      "inputTokens": 617,
+      "outputTokens": 72,
+      "costUSD": 0.000067875,
+      "totalTokens": 689,
+      "timestamp": "2026-10-08T20:54:55.801Z"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-flash-lite-latest",
+      "inputTokens": 615,
+      "outputTokens": 68,
+      "costUSD": 0.00006652499999999999,
+      "totalTokens": 683,
+      "timestamp": "2026-10-08T20:57:19.232Z"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-flash-lite-latest",
+      "inputTokens": 611,
+      "outputTokens": 65,
+      "costUSD": 0.00006532499999999999,
+      "totalTokens": 676,
+      "timestamp": "2026-10-08T20:57:33.621Z"
     }
   ],
-  "totalCostUSD": 0.000857175
+  "totalCostUSD": 0.00118665
 }
