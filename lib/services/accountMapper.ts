@@ -15,43 +15,63 @@ export interface MappingResult {
 
 /**
  * Map account name using Cashew configuration
- * Falls back to original name if not in config (passthrough)
+ * If account is in CASHEW_ACCOUNTS array, use it directly
+ * If not in array or empty, use first account from array as default
+ * If no accounts configured, use account name as-is (passthrough)
  */
 export function mapAccount(accountName: string): { mapped: string; isMapped: boolean } {
-  if (!accountName || accountName.trim() === '') {
-    return { mapped: 'Default', isMapped: false };
-  }
-
   const config = getCashewConfig();
-  const mapped = config.accounts.get(accountName);
 
-  if (mapped) {
-    return { mapped, isMapped: true };
+  // If no accounts configured, use passthrough mode
+  if (config.accounts.length === 0) {
+    // Return provided name or 'Default'
+    return { mapped: accountName || 'Default', isMapped: false };
   }
 
-  // Passthrough: return original name
-  return { mapped: accountName, isMapped: false };
+  // If no account name provided, use first account from array
+  if (!accountName || accountName.trim() === '') {
+    return { mapped: config.accounts[0], isMapped: true };
+  }
+
+  // Check if provided account name is in the allowed list
+  if (config.accounts.includes(accountName)) {
+    return { mapped: accountName, isMapped: false };
+  }
+
+  // Account not in allowed list - use first account as fallback
+  return { mapped: config.accounts[0], isMapped: true };
 }
 
 /**
- * Validate category against allowed list
- * If no CASHEW_CATEGORIES configured, any category is valid (AI determines language)
+ * Validate and constrain category against allowed list
+ * If category is not in CASHEW_CATEGORIES, use the first item (default)
+ * If no CASHEW_CATEGORIES configured, return AI's category as-is
  */
 export function validateCategory(categoryName: string): { valid: boolean; category: string } {
   if (!categoryName || categoryName.trim() === '') {
-    return { valid: false, category: '' };
+    const config = getCashewConfig();
+    // If empty, use first category as default, or empty if no config
+    const defaultCategory = config.categories.length > 0 ? config.categories[0] : '';
+    return { valid: config.categories.length > 0, category: defaultCategory };
   }
 
   const config = getCashewConfig();
 
-  // If no categories configured, accept any category in any language
+  // If no categories configured, accept any category in any language (AI determines)
   if (config.categories.length === 0) {
     return { valid: true, category: categoryName };
   }
 
-  // If categories configured, validate against the list
+  // If categories configured, check if AI's category is in the list
   const isValid = config.categories.includes(categoryName);
-  return { valid: isValid, category: categoryName };
+  
+  // If valid, use it. If not valid, use first category as default
+  if (isValid) {
+    return { valid: true, category: categoryName };
+  } else {
+    // Category not in allowed list - use first category as default
+    return { valid: false, category: config.categories[0] };
+  }
 }
 
 /**
@@ -77,7 +97,7 @@ export function mapTransaction(
  */
 export function getAvailableAccounts(): string[] {
   const config = getCashewConfig();
-  return Array.from(config.accounts.keys()).sort();
+  return [...config.accounts].sort();
 }
 
 /**
@@ -90,7 +110,8 @@ export function getAllowedCategories(): string[] {
 
 /**
  * Validate if account exists in configuration
- * Returns true even for passthrough (no config) case
+ * If no accounts configured, any account is valid (passthrough)
+ * If accounts configured, check if account is in the allowed list
  */
 export function isValidAccount(accountName: string): boolean {
   if (!accountName || accountName.trim() === '') {
@@ -98,8 +119,8 @@ export function isValidAccount(accountName: string): boolean {
   }
 
   const config = getCashewConfig();
-  // Valid if in config OR if no config exists (passthrough mode)
-  return config.accounts.size === 0 || config.accounts.has(accountName);
+  // Valid if in the allowed list OR if no accounts configured (passthrough mode)
+  return config.accounts.length === 0 || config.accounts.includes(accountName);
 }
 
 /**

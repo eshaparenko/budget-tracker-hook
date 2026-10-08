@@ -7,7 +7,7 @@
 import { ValidationError } from '../utils/errorHandler';
 
 export interface CashewConfig {
-  accounts: Map<string, string>; // Internal name → Cashew account name
+  accounts: string[]; // Array of allowed account names (no mapping)
   categories: string[]; // Array of allowed category names (any language)
 }
 
@@ -17,32 +17,7 @@ export interface ParsedCashewConfig {
 }
 
 /**
- * Parse JSON string to object with error handling
- */
-function parseJsonConfig(jsonString: string | undefined, configName: string): Record<string, string> {
-  if (!jsonString) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(jsonString);
-    if (typeof parsed !== 'object' || parsed === null) {
-      console.warn(
-        `[Cashew] ${configName} is not a valid JSON object, using empty config`
-      );
-      return {};
-    }
-    return parsed as Record<string, string>;
-  } catch (error) {
-    console.warn(
-      `[Cashew] Failed to parse ${configName}: ${error instanceof Error ? error.message : 'Unknown error'}, using empty config`
-    );
-    return {};
-  }
-}
-
-/**
- * Parse JSON array of categories
+ * Parse JSON array of accounts or categories
  */
 function parseJsonArray(jsonString: string | undefined, configName: string): string[] {
   if (!jsonString) {
@@ -68,20 +43,24 @@ function parseJsonArray(jsonString: string | undefined, configName: string): str
 
 /**
  * Load and parse Cashew configuration from environment variables
+ * 
+ * CASHEW_ACCOUNTS: JSON array of allowed account names (e.g., ["Mono", "Privat", "Ukrsib"])
+ * CASHEW_CATEGORIES: JSON array of allowed category names (e.g., ["Їжа", "Транспорт"])
+ * 
  * Falls back to empty config if variables are missing or invalid
  */
 export function loadCashewConfig(): CashewConfig {
   const rawAccounts = process.env.CASHEW_ACCOUNTS;
   const rawCategories = process.env.CASHEW_CATEGORIES;
 
-  const accountsRecord = parseJsonConfig(rawAccounts, 'CASHEW_ACCOUNTS');
+  const accountsArray = parseJsonArray(rawAccounts, 'CASHEW_ACCOUNTS');
   const categoriesArray = parseJsonArray(rawCategories, 'CASHEW_CATEGORIES');
 
   const debugLog = [];
   if (!rawAccounts) {
-    debugLog.push('[Cashew] CASHEW_ACCOUNTS not configured, using passthrough mode');
+    debugLog.push('[Cashew] CASHEW_ACCOUNTS not configured, first category will be used as fallback');
   } else {
-    debugLog.push(`[Cashew] Loaded ${Object.keys(accountsRecord).length} account mappings`);
+    debugLog.push(`[Cashew] Loaded ${accountsArray.length} allowed accounts: [${accountsArray.join(', ')}]`);
   }
 
   if (!rawCategories) {
@@ -95,7 +74,7 @@ export function loadCashewConfig(): CashewConfig {
   }
 
   return {
-    accounts: new Map(Object.entries(accountsRecord)),
+    accounts: accountsArray,
     categories: categoriesArray,
   };
 }
@@ -128,7 +107,7 @@ export function resetCashewConfig(): void {
 export function getParsedCashewConfig(): ParsedCashewConfig {
   const config = getCashewConfig();
   return {
-    accounts: Object.fromEntries(config.accounts),
+    accounts: {}, // Not used anymore - accounts is now an array
     categories: config.categories,
   };
 }
@@ -138,5 +117,5 @@ export function getParsedCashewConfig(): ParsedCashewConfig {
  */
 export function isCashewConfigured(): boolean {
   const config = getCashewConfig();
-  return config.accounts.size > 0 || config.categories.length > 0;
+  return config.accounts.length > 0 || config.categories.length > 0;
 }

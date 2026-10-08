@@ -114,14 +114,12 @@ describe('CashewLinkGenerator', () => {
     });
 
     test('should map account when provided', () => {
-      process.env.CASHEW_ACCOUNTS = JSON.stringify({
-        Mono: 'Monobank',
-      });
+      process.env.CASHEW_ACCOUNTS = JSON.stringify(['Mono', 'Privat']);
 
       const transaction = createTransaction();
       const link = generateCashewLink(transaction, { account: 'Mono' });
 
-      expect(link).toContain('account=Monobank');
+      expect(link).toContain('account=Mono');
     });
 
     test('should use passthrough account when not in config', () => {
@@ -246,14 +244,12 @@ describe('CashewLinkGenerator', () => {
     });
 
     test('should include mapped account in result', () => {
-      process.env.CASHEW_ACCOUNTS = JSON.stringify({
-        Mono: 'Monobank',
-      });
+      process.env.CASHEW_ACCOUNTS = JSON.stringify(['Mono', 'Privat']);
 
       const transaction = createTransaction();
       const result = generateCashewLinkResult(transaction, { account: 'Mono' });
 
-      expect(result.transaction.account).toBe('Monobank');
+      expect(result.transaction.account).toBe('Mono');
     });
 
     test('should include category in result', () => {
