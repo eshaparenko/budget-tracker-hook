@@ -39,12 +39,13 @@ export function decodeQueryParam(encoded: string): string {
 
 /**
  * Build a URL query string from an object
- * All values are properly encoded
+ * Parameter names are NOT encoded (they must be valid URL parameter names)
+ * Parameter values ARE properly encoded
  */
 export function buildQueryString(params: Record<string, string | number | undefined>): string {
   const encoded = Object.entries(params)
     .filter(([, value]) => value !== undefined && value !== null && value !== '')
-    .map(([key, value]) => `${encodeQueryParam(key)}=${encodeQueryParam(String(value))}`)
+    .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`)
     .join('&');
 
   return encoded;
