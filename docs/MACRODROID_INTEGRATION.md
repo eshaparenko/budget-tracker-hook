@@ -8,11 +8,9 @@ Use MacroDroid to automatically send financial notifications to the budget track
 ```
 Bank SMS/Notification in MacroDroid
   ↓
-Trigger: Parse message content
+Action: HTTP GET to cashew-link endpoint (with x-api-key header)
   ↓
-Action: HTTP GET to cashew-link endpoint
-  ↓
-Budget Tracker analyzes with Gemini AI
+Budget Tracker analyzes with AI
   ↓
 Returns Cashew app-link
   ↓
@@ -28,25 +26,22 @@ User confirms transaction in Cashew
 1. **MacroDroid** installed on Android device
 2. **Cashew App** installed on Android device
 3. **Budget Tracker** deployed and running (e.g., http://yourserver.com)
-4. **API Key** (optional, if authentication is added later)
+4. **WEBHOOK_SECRET** set on the server. Generate one with `openssl rand -hex 32`
 
 ---
 
 ## Step 1: Extract Transaction Text
 
-MacroDroid receives SMS from your bank (e.g., from Monobank, PrivatBank, ING):
+MacroDroid receives a notification or SMS from your bank:
 
 ```
-Example SMS:
-"Моноbank: Списано 500 грн за Starbucks
-https://monobank.ua/transaction/123"
+Example:
+"Оплата 405.50 UAH, Pelham. Картка *4417. Залишок: 12 345.67 UAH"
 ```
 
 In MacroDroid:
-- **Trigger:** SMS received from "Monobank" / "PrivatBank" / bank number
-- **Action 1:** Extract transaction amount and merchant
-- **Action 2:** Extract source app name
-- **Action 3:** Build HTTP request body
+- **Trigger:** Notification/SMS received from your bank app or number
+- **Action:** Keep the full text in a variable (e.g. `{sms_message}`). No pre-parsing needed, the AI extracts amount, merchant and category and ignores balance figures.
 
 ---
 
@@ -54,29 +49,28 @@ In MacroDroid:
 
 **Endpoint:** `GET /api/webhook/cashew-link`
 
+**Header (required):**
+- `x-api-key` - the value of `WEBHOOK_SECRET` from the server. It is accepted only as a header, never as a query parameter.
+
 **Parameters:**
-- `app` - Source app name (e.g., "Monobank", "PrivatBank", "SMS")
-- `body` - Transaction text (e.g., "500 UAH to Starbucks")
-- `debug` - Optional, set to `true` for debugging
+- `app` - **Account name** from `CASHEW_ACCOUNTS` (e.g., "Ukrsib", "Mono", "Privat"), case-insensitive. Missing or unknown falls back to the first account in `CASHEW_ACCOUNTS`.
+- `body` - Notification text
+- `debug` - Optional, set to `true` to add `debugLog` to the response
 
 **Example MacroDroid Action:**
 
 ```
 HTTP Request → GET
 URL: http://yourserver.com/api/webhook/cashew-link
+Headers:
+  x-api-key=<your WEBHOOK_SECRET>
 Query Parameters:
-  app=Monobank
-  body=500%20UAH%20Starbucks
+  app=Ukrsib
+  body={sms_message}
   debug=false
 ```
 
-**Or with URL encoding in MacroDroid:**
-
-```
-GET http://yourserver.com/api/webhook/cashew-link?app=Monobank&body={sms_message}&debug=false
-```
-
-Where `{sms_message}` is the MacroDroid variable containing the full SMS text.
+Let MacroDroid URL-encode the variable, or pass the parameters as key/value pairs.
 
 ---
 
@@ -87,11 +81,12 @@ The endpoint returns JSON:
 ```json
 {
   "success": true,
-  "url": "https://cashewapp.web.app/addTransaction?amount=500&category=%D0%9F%D0%BE%D0%BA%D1%83%D0%BF%D0%BA%D0%B8&merchant=Starbucks&currency=UAH&date=2026-10-04",
+  "url": "https://cashewapp.web.app/addTransaction?amount=1200&category=%D0%90%D0%B2%D1%82%D0%BE&subcategory=%D0%9F%D0%B0%D0%BB%D0%B8%D0%B2%D0%BE&wallet=Ukrsib&title=WOG",
   "transaction": {
-    "amount": 500,
-    "category": "Покупки",
-    "merchant": "Starbucks",
+    "amount": 1200,
+    "category": "Авто",
+    "subcategory": "Паливо",
+    "merchant": "WOG",
     "currency": "UAH"
   }
 }
@@ -99,10 +94,13 @@ The endpoint returns JSON:
 
 **Key fields:**
 - `success` - True if analysis succeeded
-- `url` - Cashew app-link (use this to open app)
-- `transaction.category` - AI-detected category
-- `transaction.merchant` - Vendor name
-- `transaction.currency` - Currency code
+- `url` - Cashew app-link (use this to open the app)
+- `transaction.category` - Category chosen from `CASHEW_CATEGORIES`
+- `transaction.subcategory` - Subcategory from `CASHEW_SUBCATEGORIES`, or `""` when none (the link then has no `subcategory` parameter)
+- `transaction.merchant` - Vendor name (becomes the Cashew title)
+- `transaction.currency` - Informational only. The link has no currency or date: Cashew records the amount in the account's currency, at the time the link is opened.
+
+**Error statuses:** `401` wrong/missing `x-api-key`, `500` `WEBHOOK_SECRET` not set on the server, `422` AI failed or no amount found, `400` request cannot be parsed.
 
 ---
 
@@ -113,12 +111,6 @@ In MacroDroid:
 - **URL:** Extract `url` field from response
 - **App:** "Cashew" (or default browser)
 
-```
-MacroDroid → Open Application
-App: Cashew
-Alternative: Open URL {response.url}
-```
-
 ---
 
 ## Example MacroDroid Macro
@@ -127,53 +119,40 @@ Alternative: Open URL {response.url}
 
 **Trigger:**
 ```
-SMS Received
-From: Monobank
-Content: Contains "Списано" OR "Зараховано"
+Notification Received
+App: your bank app
+Content: Contains "Оплата" OR "Зарахування"
 ```
 
 **Actions:**
 
-1. **Extract SMS Details**
-   ```
-   Variable: {sms_text} = SMS Message
-   Variable: {sms_sender} = SMS Sender
-   ```
-
-2. **Call Budget Tracker**
+1. **Call Budget Tracker**
    ```
    HTTP Request: GET
    URL: http://yourserver.com/api/webhook/cashew-link
+   Headers:
+     x-api-key=<your WEBHOOK_SECRET>
    Parameters:
-     app={sms_sender}
-     body={sms_text}
+     app=Ukrsib
+     body={notification_text}
    Response Variable: {response}
    ```
 
-3. **Check Success**
+2. **Check Success**
    ```
    IF {response.success} == true
    THEN: Continue
    ELSE: Show Toast "Failed to analyze transaction"
    ```
 
-4. **Extract Cashew Link**
+3. **Extract Cashew Link**
    ```
    Variable: {cashew_url} = {response.url}
    ```
 
-5. **Show Notification**
+4. **Open Cashew**
    ```
-   Notification:
-   Title: "{response.transaction.amount} {response.transaction.currency}"
-   Message: "{response.transaction.merchant} - {response.transaction.category}"
-   Action: Open URL {cashew_url}
-   ```
-
-6. **Open Cashew App**
-   ```
-   Open Application: Cashew
-   OR: Open URL: {cashew_url}
+   Open URL: {cashew_url}
    ```
 
 ---
@@ -183,22 +162,18 @@ Content: Contains "Списано" OR "Зараховано"
 ### Test Endpoint Directly
 
 ```bash
-# Simple request
-curl "http://localhost:3000/api/webhook/cashew-link?app=Monobank&body=500%20UAH%20Starbucks"
+curl -G "http://localhost:3000/api/webhook/cashew-link" \
+  -H "x-api-key: $WEBHOOK_SECRET" \
+  --data-urlencode "app=Ukrsib" \
+  --data-urlencode "body=Оплата 405.50 UAH, Pelham. Картка *4417. Залишок: 12 345.67 UAH"
 
-# With debug logging
-curl "http://localhost:3000/api/webhook/cashew-link?app=SMS&body=150%20EUR%20coffee&debug=true"
+# With debug logging: add --data-urlencode "debug=true"
 
 # Expected response:
 # {
 #   "success": true,
-#   "url": "https://cashewapp.web.app/addTransaction?...",
-#   "transaction": {
-#     "amount": 500,
-#     "category": "Їжа й хозяйство",
-#     "merchant": "Starbucks",
-#     "currency": "UAH"
-#   }
+#   "url": "https://cashewapp.web.app/addTransaction?amount=405.5&category=...&wallet=Ukrsib&title=Pelham&notes=...",
+#   "transaction": { "amount": 405.5, "category": "Покупки", "subcategory": "Одяг", "merchant": "Pelham", "currency": "UAH" }
 # }
 ```
 
@@ -219,138 +194,116 @@ curl "http://localhost:3000/api/webhook/cashew-link?app=SMS&body=150%20EUR%20cof
 # AI Provider for transaction analysis
 AI_PRIMARY_PROVIDER=gemini
 AI_FALLBACK_PROVIDERS=claude,openai
-
-# Gemini API Key (cheapest option)
 GEMINI_API_KEY=your_gemini_api_key
 
-# Account Name Mapping (optional)
-# Maps source account names to Cashew account names
-CASHEW_ACCOUNTS='{"Mono":"Monobank","Privat":"PrivatBank"}'
+# Required for /cashew-link (generate with: openssl rand -hex 32)
+WEBHOOK_SECRET=your_secret
 
-# Category Validation (optional)
-# If set, AI must match one of these categories
-CASHEW_CATEGORIES='["Їжа й хозяйство","Покупки","Розваги","Транспорт"]'
+# JSON array of Cashew account names. ORDER MATTERS: the first item is the fallback
+CASHEW_ACCOUNTS=["Ukrsib","Mono","Privat"]
+
+# JSON array of Cashew category names. First item is the fallback when the AI's
+# category is not in the list. If unset/empty, categories are not constrained
+CASHEW_CATEGORIES=["Покупки","Їжа й хозяйство","Розваги","Транспорт","Доходи"]
+
+# Optional JSON object: category -> its subcategories. Keys must be in CASHEW_CATEGORIES.
+# Subcategory names should be unique across categories.
+# If a value contains an apostrophe (Здоров'я), wrap the whole value in `backticks`.
+CASHEW_SUBCATEGORIES={"Транспорт":["Таксі","Громадський транспорт"],"Покупки":["Одяг","Електроніка"]}
 ```
+
+The config is read once at server start: **restart the server after editing**.
 
 ### Cashew App Configuration
 
 1. Open Cashew app
-2. Settings → Accounts
-3. Add accounts you want to use
-4. Note account names for CASHEW_ACCOUNTS mapping
+2. Create the accounts (wallets), categories and subcategories you list in `.env.local`
+3. Names must match, case-insensitive. An unknown category makes Cashew show a prompt instead of adding the transaction silently.
 
 ---
 
 ## Troubleshooting
 
-### "Failed to analyze transaction"
+### 401 Unauthorized / 500 "Server configuration error"
+
+- 401: the `x-api-key` header is missing or differs from `WEBHOOK_SECRET`. A query parameter does not work.
+- 500: `WEBHOOK_SECRET` is not set on the server. Set it and restart.
+
+### "Failed to analyze transaction" (422)
 
 **Causes:**
 - API key not configured or invalid
 - AI provider unreachable
-- Transaction text too short or unclear
+- No amount in the text ("No amount found")
 
 **Solution:**
 - Check `.env.local` for API keys
-- Test endpoint manually with debug=true
-- Include amount + currency + merchant in text
+- Test the endpoint manually with `debug=true`
+
+### Wrong Account
+
+**Cause:** `app` does not match any name in `CASHEW_ACCOUNTS`, so the first account is used (a warning is in `debugLog`).
+
+**Solution:** Pass the exact account name, or fix `CASHEW_ACCOUNTS` and restart.
+
+### Subcategory Missing in the Link
+
+**Cause:** The subcategory is not configured under the category the AI chose, so it is omitted and the transaction stays in the main category.
+
+**Solution:** Check the `debug=true` output, the spelling in `CASHEW_SUBCATEGORIES` (the key must be in `CASHEW_CATEGORIES`), and restart the server.
 
 ### Cashew Link Not Opening
 
 **Causes:**
 - Cashew app not installed
 - URL encoding issues
-- Special characters in transaction text
 
 **Solution:**
 - Ensure Cashew app is installed
-- Test URL in browser: `https://cashewapp.web.app/addTransaction?...`
-- Check debug log for special characters
-
-### Transaction Not Recognized
-
-**Causes:**
-- Text format doesn't match bank notifications
-- Missing amount or currency
-- AI doesn't understand language
-
-**Solution:**
-- Include explicit amount: "500 UAH" not just "payment"
-- Include merchant: "Starbucks" not just "shop"
-- Use Ukrainian or English text (AI trained on both)
+- Test the URL in a browser: `https://cashewapp.web.app/addTransaction?...`
 
 ### Slow Response
 
 **Causes:**
-- First request with new AI provider (warm-up)
+- First request with a new AI provider (warm-up)
 - Network latency to server
-- Complex transaction text
 
-**Solution:**
-- Subsequent requests are faster (cached)
-- Use `debug=true` to see timing breakdown
-- Keep transaction text concise
+**Solution:** Use `debug=true` to see the timing breakdown.
 
 ---
 
 ## Example Notifications
 
-### Ukrainian Banks
-
-**Monobank:**
+**Expense:**
 ```
-Моноbank: Списано 500 грн за Starbucks Ukraine https://monobank.ua/...
-→ Parsed: "500 грн за Starbucks"
-→ Generated: amount=500, currency=UAH, merchant=Starbucks
+Оплата 405.50 UAH, Pelham. Картка *4417. Залишок: 12 345.67 UAH
+→ amount=405.5, title=Pelham, notes=card last digits, balance ignored
 ```
 
-**PrivatBank:**
+**Income:**
 ```
-ПриватБанк: Картой ****1234 списано 1000 грн в "SILPO" 14:32 https://...
-→ Parsed: "1000 грн в SILPO"
-→ Generated: amount=1000, currency=UAH, merchant=SILPO
-```
-
-**ING:**
-```
-ING: Списано 150 EUR на ATM 14:45 Київ
-→ Parsed: "150 EUR ATM"
-→ Generated: amount=150, currency=EUR, merchant=ATM
+Зараховано 2500 UAH від Іван І. Залишок: 14 845.67 UAH
+→ amount=2500, category=an income category (e.g. Доходи) if present in CASHEW_CATEGORIES
 ```
 
-### Messaging Apps
-
-**Telegram Bot:**
-```
-💰 Платіж: 2500 грн за квартиру
-→ Parsed: "2500 грн квартиру"
-→ Generated: amount=2500, currency=UAH, merchant=квартиру, category=Комунальні послуги
-```
+The amount is always positive. Income vs expense is decided by the category inside Cashew.
 
 ---
 
-## Advanced: Custom Categories
+## Known Limitations
 
-To use custom categories, update `.env.local`:
-
-```bash
-CASHEW_CATEGORIES='["Їжа","Транспорт","Розваги","Работа","Комунальні послуги"]'
-```
-
-Now AI will map transactions to these exact category names.
-
-**Example:**
-- Input: "150 UAH taxi"
-- Without config: category might be "Транспортні послуги" (close match)
-- With config: category is "Транспорт" (exact match from list)
+- Amount is stored in the Cashew account's currency (no currency conversion).
+- Transaction time is when the link is opened on the device.
+- An unknown `app` silently falls back to the first account.
+- No subcategory fallback: an unknown subcategory, or one that belongs to another category, is omitted from the link.
+- All `/api/webhook/*` endpoints (`/cashew-link`, `/hook-with-params`, `/finance-hook`) require the same `x-api-key` header. MacroDroid actions for every endpoint must send it.
 
 ---
 
 ## Support
 
 - **Bug Report:** Include error message and `debug=true` logs
-- **Feature Request:** Describe use case
-- **Questions:** Check example macros above
+- **Reference:** See API_REFERENCE.md and CASHEW_INTEGRATION.md
 
 ---
 
