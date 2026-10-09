@@ -54,6 +54,12 @@ export interface IAIProvider {
   analyze(text: string): Promise<AnalysisResult>;
 
   /**
+   * Analyze transaction directly (no validation if it's a transaction)
+   * Used by Cashew endpoint where input is guaranteed to be a transaction
+   */
+  analyzeDirect(text: string): Promise<AnalysisResult>;
+
+  /**
    * Check if provider is properly configured
    */
   isConfigured(): boolean;

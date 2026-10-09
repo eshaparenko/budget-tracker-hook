@@ -30,8 +30,13 @@ export class GeminiProvider extends BaseProvider {
   }
 
   async analyze(text: string): Promise<AnalysisResult> {
+    return this.analyzeWithPrompt(text, 'validation');
+  }
+
+  protected async analyzeWithPrompt(text: string, promptType: 'validation' | 'direct'): Promise<AnalysisResult> {
     this.debugLog = [];
     this.logInfo('=== Gemini Analysis Started ===');
+    this.logInfo(`Prompt type: ${promptType}`);
 
     if (!this.isConfigured()) {
       throw new AnalysisError(
@@ -44,7 +49,7 @@ export class GeminiProvider extends BaseProvider {
       const sanitized = this.sanitizeForAnalysis(text);
       this.logSuccess(`Sanitized text: ${sanitized.substring(0, 80)}...`);
 
-      const prompt = this.buildPrompt(sanitized);
+      const prompt = this.buildPrompt(sanitized, promptType);
       this.logInfo('Calling Gemini API...');
 
       if (!this.genAI) {
@@ -66,7 +71,7 @@ export class GeminiProvider extends BaseProvider {
         `Gemini response received: ${responseText.substring(0, 100)}...`
       );
 
-      const parsed = this.parseJsonResponse(responseText);
+      const parsed = this.parseJsonResponse(responseText, promptType);
       this.logSuccess('Successfully parsed Gemini response');
 
       // Extract token usage from response metadata

@@ -47,10 +47,40 @@ export abstract class BaseProvider implements IAIProvider {
   }
 
   /**
-   * Build analysis prompt - same for all providers
+   * Build analysis prompt - can use different prompt types
+   * @param text The transaction text to analyze
+   * @param promptType 'validation' (default, checks if transaction) or 'direct' (assumes is transaction)
    */
-  protected buildPrompt(text: string): string {
+  protected buildPrompt(text: string, promptType: 'validation' | 'direct' = 'validation'): string {
     const categoriesStr = Array.from(TRANSACTION_CATEGORIES).join(', ');
+    
+    if (promptType === 'direct') {
+      // Cashew link prompt - assumes input IS a transaction, no validation needed
+      return `You are a financial transaction parser. Extract structured data from a transaction message.
+
+ASSUME this IS a transaction - extract what you can from it.
+
+Transaction text: "${text}"
+
+Extract ONLY the following JSON (no markdown, no code blocks, no extra text):
+{
+  "category": "select ONE from: ${categoriesStr}",
+  "amount": number (extract numeric value only, or 0 if not found),
+  "currency": "ISO 4217 currency code (UAH, USD, EUR, GBP, ALL, HRK, RUB, etc.) or empty string",
+  "merchant": "business/service name or empty string",
+  "transactionType": "Payment, Transfer, Refund, Withdrawal, Deposit, or Other",
+  "details": "any useful info like card/reference or empty string"
+}
+
+GUIDELINES:
+- Extract currency from ANY format: "5000 лек" → "ALL", "1500 грн" → "UAH", "$500" → "USD", "100 евро" → "EUR"
+- If amount has text like "1500 грн", extract ONLY the number: 1500
+- If no merchant found, return empty string
+- category must be ONE of the provided options
+- Return ONLY valid JSON, no extra text`;
+    }
+    
+    // Default 'validation' prompt - checks if it's actually a transaction
     return `You are a financial transaction analyzer. Your task is to extract structured data from transaction text.
 
 IMPORTANT: Determine if this is a REAL COMPLETED FINANCIAL TRANSACTION or just informational/reference text.
@@ -98,12 +128,12 @@ GUIDELINES:
   /**
    * Parse JSON response from any provider
    */
-  protected parseJsonResponse(responseText: string): ParsedTransaction {
+  protected parseJsonResponse(responseText: string, promptType: 'validation' | 'direct' = 'validation'): ParsedTransaction {
     try {
       const parsed = JSON.parse(responseText);
 
-      // Check if this is actually a transaction
-      if (parsed.isTransaction === false) {
+      // Only check isTransaction for 'validation' prompt type
+      if (promptType === 'validation' && parsed.isTransaction === false) {
         this.debugLog.push('⚠ Provider determined this is not a transaction');
         return {
           category: 'Інше',
@@ -124,6 +154,22 @@ GUIDELINES:
       );
     }
   }
+
+  /**
+   * Analyze transaction directly (no validation if it's a transaction)
+   * Used by Cashew endpoint where input is guaranteed to be a transaction
+   */
+  async analyzeDirect(text: string): Promise<AnalysisResult> {
+    // By default, use direct prompt type when calling analyze
+    // Subclasses should override this if they have custom implementation
+    return this.analyzeWithPrompt(text, 'direct');
+  }
+
+  /**
+   * Internal method - analyze with specific prompt type
+   * Subclasses implement this differently based on provider
+   */
+  protected abstract analyzeWithPrompt(text: string, promptType: 'validation' | 'direct'): Promise<AnalysisResult>;
 
   /**
    * Normalize and validate transaction data
