@@ -4,9 +4,14 @@
  */
 
 import { IAIProvider, AnalysisResult, AnalysisError, CostInfo } from '../types';
-import { ParsedTransaction } from '@/lib/types';
+import { CategoryOption, ParsedTransaction } from '@/lib/types';
 import { costTracker } from '../services/CostTracker';
+import { buildValidationPrompt, buildDirectPrompt, PromptType } from '@/lib/config/prompts';
 
+/**
+ * Default categories: used by the validation flow (/hook-with-params) and as
+ * the fallback for the direct flow when the caller supplies none.
+ */
 const TRANSACTION_CATEGORIES = [
   'Дім',
   'Одяг',
@@ -21,6 +26,11 @@ const TRANSACTION_CATEGORIES = [
   'Інше',
 ] as const;
 
+/** Fallback options for the direct flow when the caller supplies none */
+const DEFAULT_CATEGORY_OPTIONS: readonly CategoryOption[] = TRANSACTION_CATEGORIES.map(
+  (name) => ({ name })
+);
+
 /**
  * Base provider with common functionality
  */
@@ -30,9 +40,31 @@ export abstract class BaseProvider implements IAIProvider {
 
   abstract analyze(text: string): Promise<AnalysisResult>;
 
+  /**
+   * Run analysis with the given prompt type. Each provider implements the
+   * actual API call; prompt text lives in lib/config/prompts.ts.
+   */
+  protected abstract analyzeWithPrompt(
+    text: string,
+    promptType: PromptType,
+    categories?: readonly CategoryOption[]
+  ): Promise<AnalysisResult>;
+
   abstract isConfigured(): boolean;
 
   abstract getName(): string;
+
+  /**
+   * Analyze text that is already known to be a transaction (no isTransaction
+   * check). The caller decides which categories (and subcategories) the model
+   * may pick from; the result is NOT constrained to them here.
+   */
+  async analyzeDirect(
+    text: string,
+    categories?: readonly CategoryOption[]
+  ): Promise<AnalysisResult> {
+    return this.analyzeWithPrompt(text, 'direct', categories);
+  }
 
   getDebugLog(): string[] {
     return this.debugLog;
@@ -47,71 +79,19 @@ export abstract class BaseProvider implements IAIProvider {
   }
 
   /**
-   * Build analysis prompt - can use different prompt types
-   * @param text The transaction text to analyze
-   * @param promptType 'validation' (default, checks if transaction) or 'direct' (assumes is transaction)
+   * Build analysis prompt from the shared templates in lib/config/prompts.ts.
+   * Only the direct flow honours a caller-supplied category list.
    */
-  protected buildPrompt(text: string, promptType: 'validation' | 'direct' = 'validation'): string {
-    const categoriesStr = Array.from(TRANSACTION_CATEGORIES).join(', ');
-    
+  protected buildPrompt(
+    text: string,
+    promptType: PromptType = 'validation',
+    categories?: readonly CategoryOption[]
+  ): string {
     if (promptType === 'direct') {
-      // Cashew link prompt - assumes input IS a transaction, no validation needed
-      return `You are a financial transaction parser. Extract structured data from a transaction message.
-
-ASSUME this IS a transaction - extract what you can from it.
-
-Transaction text: "${text}"
-
-Extract ONLY the following JSON (no markdown, no code blocks, no extra text):
-{
-  "category": "select ONE from: ${categoriesStr}",
-  "amount": number (extract numeric value only, or 0 if not found),
-  "currency": "ISO 4217 currency code (UAH, USD, EUR, GBP, ALL, HRK, RUB, etc.) or empty string",
-  "merchant": "business/service name or empty string",
-  "transactionType": "Payment, Transfer, Refund, Withdrawal, Deposit, or Other",
-  "details": "any useful info like card/reference or empty string"
-}
-
-GUIDELINES:
-- Extract currency from ANY format: "5000 лек" → "ALL", "1500 грн" → "UAH", "$500" → "USD", "100 евро" → "EUR"
-- If amount has text like "1500 грн", extract ONLY the number: 1500
-- If no merchant found, return empty string
-- category must be ONE of the provided options
-- Return ONLY valid JSON, no extra text`;
+      const options = categories && categories.length > 0 ? categories : DEFAULT_CATEGORY_OPTIONS;
+      return buildDirectPrompt(text, options);
     }
-    
-    // Default 'validation' prompt - checks if it's actually a transaction
-    return `You are a financial transaction analyzer. Your task is to extract structured data from transaction text.
-
-IMPORTANT: Determine if this is a REAL COMPLETED FINANCIAL TRANSACTION or just informational/reference text.
-
-Guidelines for transaction vs non-transaction:
-- TRANSACTION = Someone ALREADY paid, received money, transferred funds, made a purchase, received invoice for payment, or made withdrawal
-- NOT TRANSACTION = Pricing info, tariffs, menus, FAQ, rules, shipping rates, or ACTION REQUESTS like "Проплати 30000 грн" (pay 30k UAH)
-- Action requests use imperative verbs: проплати (pay), переведи (transfer), зніми (withdraw), закупи (buy)
-
-Transaction text: "${text}"
-
-Extract ONLY the following JSON (no markdown, no code blocks, no extra text):
-{
-  "isTransaction": true/false (is this a completed financial transaction or just info/action request?),
-  "category": "select ONE from: ${categoriesStr}, or empty string if not a transaction",
-  "amount": number or 0 if not found (extract numeric value only),
-  "currency": "ISO 4217 currency code (UAH, USD, EUR, GBP, ALL, HRK, RUB, etc.) or empty string if not found",
-  "merchant": "business/service name or empty string",
-  "transactionType": "Payment, Transfer, Refund, Withdrawal, Deposit, or Other",
-  "details": "any useful info like card/reference or empty string"
-}
-
-GUIDELINES:
-- isTransaction = true ONLY if: transaction ALREADY HAPPENED (past tense) - paid, received, transferred, purchased, withdrawn
-- isTransaction = false if: action request (imperative: "Проплати", "Переведи", "Закупи"), pricing info, tariffs, menus, FAQ, rules
-- Extract currency code from ANY format: "5000 лек" → "ALL", "1500 грн" → "UAH", "$500" → "USD"
-- If you see a currency word/symbol, convert it to ISO 4217 code (e.g., лек=ALL, грн=UAH, евро=EUR, долар=USD, дин=RSD, etc.)
-- If amount contains text like "1500 грн", extract ONLY the number: 1500
-- If no merchant found, return empty string, NOT null
-- category should be one of the provided options (or empty if not a transaction)
-- Do not include any text before or after JSON`;
+    return buildValidationPrompt(text, TRANSACTION_CATEGORIES);
   }
 
   /**
@@ -128,11 +108,14 @@ GUIDELINES:
   /**
    * Parse JSON response from any provider
    */
-  protected parseJsonResponse(responseText: string, promptType: 'validation' | 'direct' = 'validation'): ParsedTransaction {
+  protected parseJsonResponse(
+    responseText: string,
+    promptType: PromptType = 'validation'
+  ): ParsedTransaction {
     try {
       const parsed = JSON.parse(responseText);
 
-      // Only check isTransaction for 'validation' prompt type
+      // isTransaction only exists in the validation prompt
       if (promptType === 'validation' && parsed.isTransaction === false) {
         this.debugLog.push('⚠ Provider determined this is not a transaction');
         return {
@@ -145,8 +128,7 @@ GUIDELINES:
         } as ParsedTransaction;
       }
 
-      // Validate and normalize fields
-      return this.normalizeTransaction(parsed);
+      return this.normalizeTransaction(parsed, promptType);
     } catch (error) {
       throw new AnalysisError(
         this.getName(),
@@ -156,25 +138,9 @@ GUIDELINES:
   }
 
   /**
-   * Analyze transaction directly (no validation if it's a transaction)
-   * Used by Cashew endpoint where input is guaranteed to be a transaction
-   */
-  async analyzeDirect(text: string): Promise<AnalysisResult> {
-    // By default, use direct prompt type when calling analyze
-    // Subclasses should override this if they have custom implementation
-    return this.analyzeWithPrompt(text, 'direct');
-  }
-
-  /**
-   * Internal method - analyze with specific prompt type
-   * Subclasses implement this differently based on provider
-   */
-  protected abstract analyzeWithPrompt(text: string, promptType: 'validation' | 'direct'): Promise<AnalysisResult>;
-
-  /**
    * Normalize and validate transaction data
    */
-  private normalizeTransaction(data: any): ParsedTransaction {
+  private normalizeTransaction(data: any, promptType: PromptType): ParsedTransaction {
     const normalized: ParsedTransaction = {
       category: typeof data.category === 'string' ? data.category : 'Інше',
       amount: typeof data.amount === 'number' ? data.amount : 0,
@@ -184,8 +150,18 @@ GUIDELINES:
       details: typeof data.details === 'string' ? data.details : '',
     };
 
-    // Validate category
-    if (!TRANSACTION_CATEGORIES.includes(normalized.category as any)) {
+    // Only the direct prompt asks for a subcategory; keep the validation result unchanged.
+    if (promptType === 'direct') {
+      normalized.subcategory =
+        typeof data.subcategory === 'string' ? data.subcategory.trim() : '';
+    }
+
+    // Validation flow constrains to the default list (original behaviour).
+    // The direct flow leaves category and subcategory to the caller (Cashew boundary).
+    if (
+      promptType === 'validation' &&
+      !TRANSACTION_CATEGORIES.includes(normalized.category as any)
+    ) {
       normalized.category = 'Інше';
     }
 

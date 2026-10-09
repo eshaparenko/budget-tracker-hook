@@ -1,156 +1,95 @@
 /**
  * Account and Category Mapper
- * Maps transaction accounts to Cashew app format
- * Validates categories against allowed list (if configured)
+ * Constrains an account / category to the values configured in
+ * CASHEW_ACCOUNTS / CASHEW_CATEGORIES (case-insensitive, canonical casing kept).
+ *
+ * Fallback rule: a value that is missing or not in the configured list is
+ * replaced by the FIRST configured item. With no configuration the value is
+ * passed through unchanged.
  */
 
-import { getCashewConfig } from './cashewConfigLoader';
+import { getCashewConfig, getSubcategoriesFor } from './cashewConfigLoader';
 
 export interface MappingResult {
   account: string;
   category: string;
-  accountMapped: boolean; // true if found in config, false if passthrough
-  categoryValid: boolean; // true if in allowed list or no config
+  /** '' when none was requested or the requested one does not belong to the category */
+  subcategory: string;
+  /** false when the requested account was missing/unknown and a fallback was used */
+  accountMatched: boolean;
+  /** false when the requested category was missing/unknown and a fallback was used */
+  categoryMatched: boolean;
+  /** false when a subcategory was requested but dropped (not under the chosen category) */
+  subcategoryMatched: boolean;
+}
+
+function findIgnoreCase(list: readonly string[], value: string): string | undefined {
+  const needle = value.trim().toLowerCase();
+  return list.find((item) => item.toLowerCase() === needle);
+}
+
+export function mapAccount(accountName: string = ''): { account: string; matched: boolean } {
+  const { accounts } = getCashewConfig();
+  const requested = accountName.trim();
+
+  if (accounts.length === 0) {
+    return { account: requested || 'Default', matched: requested !== '' };
+  }
+
+  const hit = findIgnoreCase(accounts, requested);
+  return hit
+    ? { account: hit, matched: true }
+    : { account: accounts[0], matched: false };
+}
+
+export function validateCategory(categoryName: string = ''): { category: string; matched: boolean } {
+  const { categories } = getCashewConfig();
+  const requested = categoryName.trim();
+
+  if (categories.length === 0) {
+    return { category: requested, matched: requested !== '' };
+  }
+
+  const hit = findIgnoreCase(categories, requested);
+  return hit
+    ? { category: hit, matched: true }
+    : { category: categories[0], matched: false };
 }
 
 /**
- * Map account name using Cashew configuration
- * If account is in CASHEW_ACCOUNTS array (case-insensitive), use the exact config name
- * If not in array or empty, use first account from array as default
- * If no accounts configured, use account name as-is (passthrough)
+ * A subcategory is only valid under the category it is configured for.
+ * Unlike account/category there is no fallback: dropping it is harmless because
+ * the transaction simply stays in the main category.
+ * `category` must already be the constrained category name.
  */
-export function mapAccount(accountName: string): { mapped: string; isMapped: boolean } {
-  const config = getCashewConfig();
-
-  // If no accounts configured, use passthrough mode
-  if (config.accounts.length === 0) {
-    // Return provided name or 'Default'
-    return { mapped: accountName || 'Default', isMapped: false };
+export function validateSubcategory(
+  category: string,
+  subcategoryName: string = ''
+): { subcategory: string; matched: boolean } {
+  const requested = subcategoryName.trim().toLowerCase();
+  if (!requested) {
+    return { subcategory: '', matched: true }; // nothing requested, nothing dropped
   }
 
-  // If no account name provided, use first account from array
-  if (!accountName || accountName.trim() === '') {
-    return { mapped: config.accounts[0], isMapped: true };
-  }
-
-  // Check if provided account name is in the allowed list (case-insensitive)
-  const lowerAccountName = accountName.toLowerCase();
-  const matchedAccount = config.accounts.find(
-    acc => acc.toLowerCase() === lowerAccountName
-  );
-
-  if (matchedAccount) {
-    // Use the exact account name from config
-    return { mapped: matchedAccount, isMapped: false };
-  }
-
-  // Account not in allowed list - use first account as fallback
-  return { mapped: config.accounts[0], isMapped: true };
+  const hit = getSubcategoriesFor(category).find((s) => s.toLowerCase() === requested);
+  return hit ? { subcategory: hit, matched: true } : { subcategory: '', matched: false };
 }
 
-/**
- * Validate and constrain category against allowed list
- * If category is not in CASHEW_CATEGORIES, use the first item (default)
- * If no CASHEW_CATEGORIES configured, return AI's category as-is
- */
-export function validateCategory(categoryName: string): { valid: boolean; category: string } {
-  if (!categoryName || categoryName.trim() === '') {
-    const config = getCashewConfig();
-    // If empty, use first category as default, or empty if no config
-    const defaultCategory = config.categories.length > 0 ? config.categories[0] : '';
-    return { valid: config.categories.length > 0, category: defaultCategory };
-  }
-
-  const config = getCashewConfig();
-
-  // If no categories configured, accept any category in any language (AI determines)
-  if (config.categories.length === 0) {
-    return { valid: true, category: categoryName };
-  }
-
-  // If categories configured, check if AI's category is in the list
-  const isValid = config.categories.includes(categoryName);
-  
-  // If valid, use it. If not valid, use first category as default
-  if (isValid) {
-    return { valid: true, category: categoryName };
-  } else {
-    // Category not in allowed list - use first category as default
-    return { valid: false, category: config.categories[0] };
-  }
-}
-
-/**
- * Map account and validate category for a transaction
- */
 export function mapTransaction(
   accountName: string | undefined,
-  categoryName: string | undefined
+  categoryName: string | undefined,
+  subcategoryName?: string
 ): MappingResult {
-  const account = mapAccount(accountName || '');
-  const category = validateCategory(categoryName || '');
+  const account = mapAccount(accountName);
+  const category = validateCategory(categoryName);
+  const subcategory = validateSubcategory(category.category, subcategoryName);
 
   return {
-    account: account.mapped,
+    account: account.account,
     category: category.category,
-    accountMapped: account.isMapped,
-    categoryValid: category.valid,
+    subcategory: subcategory.subcategory,
+    accountMatched: account.matched,
+    categoryMatched: category.matched,
+    subcategoryMatched: subcategory.matched,
   };
-}
-
-/**
- * Get available accounts from configuration
- */
-export function getAvailableAccounts(): string[] {
-  const config = getCashewConfig();
-  return [...config.accounts].sort();
-}
-
-/**
- * Get allowed categories from configuration
- */
-export function getAllowedCategories(): string[] {
-  const config = getCashewConfig();
-  return [...config.categories].sort();
-}
-
-/**
- * Validate if account exists in configuration (case-insensitive)
- * If no accounts configured, any account is valid (passthrough)
- * If accounts configured, check if account is in the allowed list
- */
-export function isValidAccount(accountName: string): boolean {
-  if (!accountName || accountName.trim() === '') {
-    return false;
-  }
-
-  const config = getCashewConfig();
-  
-  // Valid if in the allowed list (case-insensitive) OR if no accounts configured (passthrough mode)
-  if (config.accounts.length === 0) {
-    return true;
-  }
-
-  const lowerAccountName = accountName.toLowerCase();
-  return config.accounts.some(acc => acc.toLowerCase() === lowerAccountName);
-}
-
-/**
- * Validate if category is in allowed list
- * If no CASHEW_CATEGORIES configured, any non-empty category is valid
- */
-export function isValidCategory(categoryName: string): boolean {
-  if (!categoryName || categoryName.trim() === '') {
-    return false;
-  }
-
-  const config = getCashewConfig();
-  
-  // If no categories configured, any category is valid (AI in any language)
-  if (config.categories.length === 0) {
-    return true;
-  }
-
-  // If categories configured, check against list
-  return config.categories.includes(categoryName);
 }

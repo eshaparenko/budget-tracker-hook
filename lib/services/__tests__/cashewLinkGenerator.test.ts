@@ -1,21 +1,19 @@
 /**
  * Tests for CashewLinkGenerator
+ * Parameter reference: https://cashewapp.web.app/faq.html#app-links
  */
 
-import {
-  generateCashewLink,
-  generateCashewLinkResult,
-  generateCashewLinkHtml,
-  validateTransactionForLink,
-} from '../cashewLinkGenerator';
+import { generateCashewLink } from '../cashewLinkGenerator';
 import { ParsedTransaction } from '../../types';
 import { resetCashewConfig } from '../cashewConfigLoader';
 
-describe('CashewLinkGenerator', () => {
+describe('generateCashewLink', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    delete process.env.CASHEW_ACCOUNTS;
+    delete process.env.CASHEW_CATEGORIES;
     resetCashewConfig();
   });
 
@@ -24,7 +22,7 @@ describe('CashewLinkGenerator', () => {
     resetCashewConfig();
   });
 
-  const createTransaction = (overrides: Partial<ParsedTransaction> = {}): ParsedTransaction => ({
+  const tx = (overrides: Partial<ParsedTransaction> = {}): ParsedTransaction => ({
     amount: 150,
     category: 'Food',
     merchant: 'Starbucks',
@@ -32,434 +30,170 @@ describe('CashewLinkGenerator', () => {
     ...overrides,
   });
 
-  describe('generateCashewLink', () => {
-    test('should generate valid Cashew link', () => {
-      const transaction = createTransaction();
+  const params = (transaction: ParsedTransaction, account?: string) =>
+    new URL(generateCashewLink(transaction, { account }).url).searchParams;
 
-      const link = generateCashewLink(transaction);
+  test('targets the Cashew addTransaction endpoint', () => {
+    const { url } = generateCashewLink(tx());
 
-      expect(link).toMatch(/^https:\/\/cashewapp\.web\.app\/addTransaction\?/);
-      expect(link).toContain('amount=150');
-      expect(link).toContain('category=Food');
-      expect(link).toContain('title=Starbucks');
-      expect(link).toContain('currency=UAH');
-    });
+    expect(url).toMatch(/^https:\/\/cashewapp\.web\.app\/addTransaction\?/);
+  });
 
-    test('should include all required parameters', () => {
-      const transaction = createTransaction({
-        amount: 500,
-        category: 'Shopping',
-        merchant: 'Mall Store',
-        currency: 'EUR',
-      });
+  test('maps transaction fields to Cashew parameters', () => {
+    const p = params(tx({ details: 'card *1234' }));
 
-      const link = generateCashewLink(transaction);
+    expect(p.get('amount')).toBe('150');
+    expect(p.get('category')).toBe('Food');
+    expect(p.get('title')).toBe('Starbucks');
+    expect(p.get('notes')).toBe('card *1234');
+  });
 
-      expect(link).toContain('amount=500');
-      expect(link).toContain('category=Shopping');
-      expect(link).toContain('title=Mall%20Store'); // Space encoded
-      expect(link).toContain('currency=EUR');
-    });
+  test('does not send parameters Cashew does not support', () => {
+    const p = params(tx());
 
-    test('should URL-encode special characters', () => {
-      const transaction = createTransaction({
-        merchant: 'Coffee & Tea Shop',
-        category: 'Food & Drinks',
-      });
+    expect(p.has('currency')).toBe(false);
+  });
 
-      const link = generateCashewLink(transaction);
+  test('does not use transactionType as notes', () => {
+    const p = params(tx({ transactionType: 'Payment' }));
 
-      expect(link).toContain('title=Coffee%20%26%20Tea%20Shop');
-      expect(link).toContain('category=Food%20%26%20Drinks');
-    });
+    expect(p.has('notes')).toBe(false);
+  });
 
-    test('should handle Cyrillic characters', () => {
-      const transaction = createTransaction({
-        merchant: 'Кофе-лаунж',
-        category: 'Їжа й напої',
-      });
+  test('omits empty title and notes', () => {
+    const p = params(tx({ merchant: '', details: '' }));
 
-      const link = generateCashewLink(transaction);
+    expect(p.has('title')).toBe(false);
+    expect(p.has('notes')).toBe(false);
+  });
 
-      // Cyrillic should be properly URL-encoded
-      expect(link).toContain('%');
-      expect(link).toMatch(/addTransaction\?/);
-    });
+  test('does not send a date, so Cashew uses the device current date/time', () => {
+    const p = params(tx());
 
-    test('should handle Unicode emoji', () => {
-      const transaction = createTransaction({
-        merchant: '☕ Coffee Shop',
-        category: '🍕 Food',
-      });
+    expect(p.has('date')).toBe(false);
+    expect(p.has('dateCreated')).toBe(false);
+  });
 
-      const link = generateCashewLink(transaction);
+  test('keeps decimal amounts', () => {
+    expect(params(tx({ amount: 99.99 })).get('amount')).toBe('99.99');
+  });
 
-      expect(link).toMatch(/addTransaction\?/);
-      expect(link).toContain('amount=150');
-    });
+  test('round-trips special characters, Cyrillic and emoji', () => {
+    const p = params(tx({ merchant: 'Coffee & Tea #1? "Кафе" ☕', category: 'Їжа й напої' }));
 
-    test('should truncate long merchant names', () => {
-      const longMerchant = 'A'.repeat(200);
-      const transaction = createTransaction({
-        merchant: longMerchant,
-      });
+    expect(p.get('title')).toBe('Coffee & Tea #1? "Кафе" ☕');
+    expect(p.get('category')).toBe('Їжа й напої');
+  });
 
-      const link = generateCashewLink(transaction);
+  test('never leaves raw "&", "#" or spaces inside a value', () => {
+    const { url } = generateCashewLink(tx({ merchant: 'A & B #1' }));
+    const query = url.split('?')[1];
 
-      // Should have truncated
-      const match = link.match(/title=([^&]+)/);
-      expect(match).toBeTruthy();
-      const decodedTitle = decodeURIComponent(match![1]);
-      expect(decodedTitle.length).toBeLessThanOrEqual(103); // Includes '...'
-    });
+    expect(query.split('&')).toHaveLength(4); // amount, category, wallet, title
+    expect(query).not.toContain(' ');
+    expect(query).not.toContain('#');
+  });
 
-    test('should map account when provided', () => {
+  test('normalizes whitespace and control characters', () => {
+    expect(params(tx({ merchant: 'Store \n   Name' })).get('title')).toBe('Store Name');
+  });
+
+  test('truncates long titles', () => {
+    const title = params(tx({ merchant: 'A'.repeat(200) })).get('title')!;
+
+    expect(title.length).toBeLessThanOrEqual(103); // 100 + '...'
+  });
+
+  describe('with Cashew config', () => {
+    beforeEach(() => {
       process.env.CASHEW_ACCOUNTS = JSON.stringify(['Mono', 'Privat']);
-
-      const transaction = createTransaction();
-      const link = generateCashewLink(transaction, { account: 'Mono' });
-
-      // Cashew uses 'wallet' parameter for account (internally referred to as wallet in code)
-      expect(link).toContain('wallet=Mono');
+      process.env.CASHEW_CATEGORIES = JSON.stringify(['Побут', 'Авто']);
+      resetCashewConfig();
     });
 
-    test('should use mapped account in wallet parameter', () => {
-      process.env.CASHEW_ACCOUNTS = JSON.stringify(['Mono', 'Privat']);
-
-      const transaction = createTransaction();
-      // When account is provided and in config, use it in wallet parameter
-      const link = generateCashewLink(transaction, { account: 'Privat' });
-
-      expect(link).toContain('wallet=Privat');
+    test('writes the configured account as wallet (case-insensitive)', () => {
+      expect(params(tx({ category: 'Авто' }), 'privat').get('wallet')).toBe('Privat');
     });
 
-    test('should validate category when config provided', () => {
-      process.env.CASHEW_CATEGORIES = JSON.stringify([
-        'Food',
-      ]);
-
-      const transaction = createTransaction({ category: 'Food' });
-      const link = generateCashewLink(transaction);
-
-      expect(link).toContain('category=Food');
+    test('falls back to the first account when unknown', () => {
+      expect(params(tx({ category: 'Авто' }), 'Приват').get('wallet')).toBe('Mono');
     });
 
-    test('should handle decimal amounts', () => {
-      const transaction = createTransaction({ amount: 99.99 });
-
-      const link = generateCashewLink(transaction);
-
-      expect(link).toContain('amount=99.99');
+    test('constrains the category to the configured list', () => {
+      expect(params(tx({ category: 'Паливо' })).get('category')).toBe('Побут');
+      expect(params(tx({ category: 'авто' })).get('category')).toBe('Авто');
     });
 
-    test('should handle various currency codes', () => {
-      const currencies = ['USD', 'EUR', 'UAH', 'GBP', 'JPY', 'CHF'];
+    test('returns the mapping that was written into the link', () => {
+      const { mapping } = generateCashewLink(tx({ category: 'Паливо' }), { account: 'Unknown' });
 
-      currencies.forEach(currency => {
-        const transaction = createTransaction({ currency });
-        const link = generateCashewLink(transaction);
-
-        expect(link).toContain(`currency=${currency}`);
+      expect(mapping).toEqual({
+        account: 'Mono',
+        category: 'Побут',
+        subcategory: '',
+        accountMatched: false,
+        categoryMatched: false,
+        subcategoryMatched: true,
       });
-    });
-
-    test('should include date parameter', () => {
-      const transaction = createTransaction();
-      const link = generateCashewLink(transaction);
-
-      // Should have a date like YYYY-MM-DD
-      expect(link).toMatch(/date=\d{4}-\d{2}-\d{2}/);
-    });
-
-    test('should include transaction type as notes if provided', () => {
-      const transaction = createTransaction({
-        transactionType: 'Payment',
-      });
-
-      const link = generateCashewLink(transaction);
-
-      expect(link).toContain('notes=Payment');
-    });
-
-    test('should handle negative amount in validation', () => {
-      const transaction = createTransaction({ amount: -50 });
-      const validation = validateTransactionForLink(transaction);
-
-      expect(validation.valid).toBe(false);
-      expect(validation.errors).toContain('Amount must be a positive number');
-    });
-
-    test('should handle zero amount in validation', () => {
-      const transaction = createTransaction({ amount: 0 });
-      const validation = validateTransactionForLink(transaction);
-
-      expect(validation.valid).toBe(false);
-      expect(validation.errors).toContain('Amount must be a positive number');
-    });
-
-    test('should handle missing category in validation', () => {
-      const transaction = createTransaction({ category: '' });
-      const validation = validateTransactionForLink(transaction);
-
-      expect(validation.valid).toBe(false);
-    });
-
-    test('should handle missing currency in validation', () => {
-      const transaction = createTransaction({ currency: '' });
-      const validation = validateTransactionForLink(transaction);
-
-      expect(validation.valid).toBe(false);
-    });
-
-    test('should handle missing merchant in validation', () => {
-      const transaction = createTransaction({ merchant: '' });
-      const validation = validateTransactionForLink(transaction);
-
-      expect(validation.valid).toBe(false);
     });
   });
 
-  describe('generateCashewLinkResult', () => {
-    test('should generate complete result object', () => {
-      const transaction = createTransaction();
-      const result = generateCashewLinkResult(transaction);
-
-      expect(result.link).toMatch(/^https:\/\/cashewapp\.web\.app\/addTransaction\?/);
-      expect(result.transaction.amount).toBe(150);
-      expect(result.transaction.category).toBe('Food');
-      expect(result.transaction.merchant).toBe('Starbucks');
-      expect(result.transaction.currency).toBe('UAH');
+  describe('with subcategories', () => {
+    beforeEach(() => {
+      process.env.CASHEW_CATEGORIES = JSON.stringify(['Інше', 'Авто', 'Транспорт']);
+      process.env.CASHEW_SUBCATEGORIES = JSON.stringify({ Авто: ['Паливо', 'Паркування'], Транспорт: ['Таксі'] });
+      resetCashewConfig();
     });
 
-    test('should include cost info when provided', () => {
-      const transaction = createTransaction();
-      const costInfo = { provider: 'gemini', costUSD: 0.00012 };
+    test('sends a subcategory that belongs to the category', () => {
+      const p = params(tx({ category: 'Авто', subcategory: 'Паливо' }));
 
-      const result = generateCashewLinkResult(transaction, {}, costInfo);
-
-      expect(result.cost).toEqual(costInfo);
+      expect(p.get('category')).toBe('Авто');
+      expect(p.get('subcategory')).toBe('Паливо');
     });
 
-    test('should not include debug log by default', () => {
-      const transaction = createTransaction();
-      const result = generateCashewLinkResult(transaction);
-
-      expect(result.debugLog).toBeUndefined();
+    test('normalizes the subcategory to the configured casing', () => {
+      expect(params(tx({ category: 'Авто', subcategory: 'паливо' })).get('subcategory')).toBe('Паливо');
     });
 
-    test('should include mapped account in result', () => {
-      process.env.CASHEW_ACCOUNTS = JSON.stringify(['Mono', 'Privat']);
+    test('omits a subcategory from the wrong category', () => {
+      const p = params(tx({ category: 'Транспорт', subcategory: 'Паливо' }));
 
-      const transaction = createTransaction();
-      const result = generateCashewLinkResult(transaction, { account: 'Mono' });
-
-      expect(result.transaction.account).toBe('Mono');
+      expect(p.get('category')).toBe('Транспорт');
+      expect(p.has('subcategory')).toBe(false);
     });
 
-    test('should include category in result', () => {
-      process.env.CASHEW_CATEGORIES = JSON.stringify([
-        'Food',
-      ]);
+    test('omits the subcategory when the category fell back', () => {
+      const p = params(tx({ category: 'Невідома', subcategory: 'Паливо' }));
 
-      const transaction = createTransaction({ category: 'Food' });
-      const result = generateCashewLinkResult(transaction);
-
-      expect(result.transaction.category).toBe('Food');
-    });
-  });
-
-  describe('generateCashewLinkHtml', () => {
-    test('should generate valid HTML', () => {
-      const transaction = createTransaction();
-      const html = generateCashewLinkHtml(transaction);
-
-      expect(html).toContain('<a href=');
-      expect(html).toContain('cashewapp.web.app');
-      expect(html).toContain('class="cashew-btn"');
-      expect(html).toContain('target="_blank"');
+      expect(p.get('category')).toBe('Інше');
+      expect(p.has('subcategory')).toBe(false);
     });
 
-    test('should include transaction details in HTML', () => {
-      const transaction = createTransaction({
-        amount: 250,
-        merchant: 'Coffee Shop',
-      });
-
-      const html = generateCashewLinkHtml(transaction);
-
-      expect(html).toContain('250');
-      expect(html).toContain('Coffee Shop');
+    test('omits an empty or missing subcategory', () => {
+      expect(params(tx({ category: 'Авто', subcategory: '' })).has('subcategory')).toBe(false);
+      expect(params(tx({ category: 'Авто' })).has('subcategory')).toBe(false);
     });
 
-    test('should escape HTML special characters', () => {
-      const transaction = createTransaction({
-        merchant: 'Store & <Shop>',
-      });
+    test('encodes subcategory names with spaces and apostrophes', () => {
+      process.env.CASHEW_CATEGORIES = JSON.stringify(['Рахунки']);
+      process.env.CASHEW_SUBCATEGORIES = JSON.stringify({ Рахунки: ["Зв'язок та інтернет"] });
+      resetCashewConfig();
 
-      const html = generateCashewLinkHtml(transaction);
+      const { url } = generateCashewLink(tx({ category: 'Рахунки', subcategory: "Зв'язок та інтернет" }));
 
-      expect(html).toContain('&amp;');
-      expect(html).not.toContain('<Shop>'); // Should be escaped
-    });
-
-    test('should include proper styling', () => {
-      const transaction = createTransaction();
-      const html = generateCashewLinkHtml(transaction);
-
-      expect(html).toContain('style=');
-      expect(html).toContain('cashew-widget');
-      expect(html).toContain('cashew-btn');
-      expect(html).toContain('cashew-summary');
-    });
-
-    test('should include category in HTML', () => {
-      process.env.CASHEW_CATEGORIES = JSON.stringify([
-        'Food',
-      ]);
-
-      const transaction = createTransaction({ category: 'Food' });
-      const html = generateCashewLinkHtml(transaction);
-
-      expect(html).toContain('Food');
+      expect(new URL(url).searchParams.get('subcategory')).toBe("Зв'язок та інтернет");
+      expect(url.split('?')[1]).not.toContain(' ');
     });
   });
 
-  describe('validateTransactionForLink', () => {
-    test('should validate correct transaction', () => {
-      const transaction = createTransaction();
-      const result = validateTransactionForLink(transaction);
-
-      expect(result.valid).toBe(true);
-      expect(result.errors).toHaveLength(0);
-    });
-
-    test('should reject negative amount', () => {
-      const transaction = createTransaction({ amount: -50 });
-      const result = validateTransactionForLink(transaction);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain('Amount must be a positive number');
-    });
-
-    test('should reject zero amount', () => {
-      const transaction = createTransaction({ amount: 0 });
-      const result = validateTransactionForLink(transaction);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain('Amount must be a positive number');
-    });
-
-    test('should reject missing category', () => {
-      const transaction = createTransaction({ category: '' });
-      const result = validateTransactionForLink(transaction);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors.some(e => e.includes('Category'))).toBe(true);
-    });
-
-    test('should reject missing currency', () => {
-      const transaction = createTransaction({ currency: '' });
-      const result = validateTransactionForLink(transaction);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors.some(e => e.includes('Currency'))).toBe(true);
-    });
-
-    test('should reject missing merchant', () => {
-      const transaction = createTransaction({ merchant: '' });
-      const result = validateTransactionForLink(transaction);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors.some(e => e.includes('Merchant'))).toBe(true);
-    });
-
-    test('should collect multiple errors', () => {
-      const transaction = createTransaction({
-        amount: 0,
-        category: '',
-        currency: '',
-        merchant: '',
-      });
-
-      const result = validateTransactionForLink(transaction);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors.length).toBeGreaterThan(1);
-    });
-
-    test('should validate with optional transactionType', () => {
-      const transaction = createTransaction({
-        transactionType: 'Payment',
-      });
-
-      const result = validateTransactionForLink(transaction);
-
-      expect(result.valid).toBe(true);
-      expect(result.errors).toHaveLength(0);
-    });
-
-    test('should validate with optional details', () => {
-      const transaction = createTransaction({
-        details: 'Card ending in 1234',
-      });
-
-      const result = validateTransactionForLink(transaction);
-
-      expect(result.valid).toBe(true);
-      expect(result.errors).toHaveLength(0);
-    });
+  test('uses "Default" as wallet when no accounts are configured and none is given', () => {
+    expect(params(tx()).get('wallet')).toBe('Default');
   });
 
-  describe('URL encoding edge cases', () => {
-    test('should handle multiple spaces (normalized to single)', () => {
-      const transaction = createTransaction({
-        merchant: 'Store    Name',
-      });
-
-      const link = generateCashewLink(transaction);
-
-      // Multiple spaces get normalized to single space during sanitization
-      expect(link).toContain('title=Store%20Name');
-    });
-
-    test('should handle special characters in category', () => {
-      const transaction = createTransaction({
-        category: 'Bills & Utilities',
-      });
-
-      const link = generateCashewLink(transaction);
-
-      expect(link).toContain('%26'); // & encoded
-    });
-
-    test('should handle quotes in merchant name', () => {
-      const transaction = createTransaction({
-        merchant: 'Store "Name"',
-      });
-
-      const link = generateCashewLink(transaction);
-
-      expect(link).toMatch(/addTransaction\?/);
-    });
-
-    test('should handle hash symbols', () => {
-      const transaction = createTransaction({
-        merchant: '#1 Shop',
-      });
-
-      const link = generateCashewLink(transaction);
-
-      expect(link).toContain('%23'); // # encoded
-    });
-
-    test('should handle question marks', () => {
-      const transaction = createTransaction({
-        merchant: 'Store? Really?',
-      });
-
-      const link = generateCashewLink(transaction);
-
-      expect(link).toContain('%3F'); // ? encoded
+  describe('invalid input', () => {
+    test.each([-50, NaN])('throws for amount %p', (amount) => {
+      expect(() => generateCashewLink(tx({ amount }))).toThrow('Invalid amount');
     });
   });
 });

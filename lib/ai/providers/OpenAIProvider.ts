@@ -6,6 +6,8 @@
 import OpenAI from 'openai';
 import { BaseProvider } from './BaseProvider';
 import { AnalysisResult, AnalysisError } from '../types';
+import { PromptType } from '@/lib/config/prompts';
+import { CategoryOption } from '@/lib/types';
 
 export class OpenAIProvider extends BaseProvider {
   private client: OpenAI | null = null;
@@ -36,7 +38,11 @@ export class OpenAIProvider extends BaseProvider {
     return this.analyzeWithPrompt(text, 'validation');
   }
 
-  protected async analyzeWithPrompt(text: string, promptType: 'validation' | 'direct'): Promise<AnalysisResult> {
+  protected async analyzeWithPrompt(
+    text: string,
+    promptType: PromptType,
+    categories?: readonly CategoryOption[]
+  ): Promise<AnalysisResult> {
     this.debugLog = [];
     this.logInfo('=== OpenAI Analysis Started ===');
     this.logInfo(`Prompt type: ${promptType}`);
@@ -52,7 +58,7 @@ export class OpenAIProvider extends BaseProvider {
       const sanitized = this.sanitizeForAnalysis(text);
       this.logSuccess(`Sanitized text: ${sanitized.substring(0, 80)}...`);
 
-      const prompt = this.buildPrompt(sanitized, promptType);
+      const prompt = this.buildPrompt(sanitized, promptType, categories);
       this.logInfo('Calling OpenAI API...');
 
       if (!this.client) {

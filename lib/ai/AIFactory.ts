@@ -16,6 +16,7 @@ import {
   loadFallbackConfig,
   logProviderConfiguration,
 } from './config/environmentConfig';
+import { CategoryOption } from '@/lib/types';
 
 export class AIFactory {
   private static instance: AIFactory;
@@ -116,9 +117,30 @@ export class AIFactory {
   }
 
   /**
-   * Analyze transaction with automatic fallback
+   * Analyze arbitrary text: the model first decides if it is a transaction.
+   * Used by /hook-with-params.
    */
   async analyze(text: string): Promise<AnalysisResult> {
+    return this.runWithFallback((provider) => provider.analyze(text));
+  }
+
+  /**
+   * Analyze text already known to be a transaction (no isTransaction check).
+   * `categories` is the list the model may pick from. Used by /cashew-link.
+   */
+  async analyzeDirect(
+    text: string,
+    categories?: readonly CategoryOption[]
+  ): Promise<AnalysisResult> {
+    return this.runWithFallback((provider) => provider.analyzeDirect(text, categories));
+  }
+
+  /**
+   * Run an analysis call against the primary provider, then fallbacks in order
+   */
+  private async runWithFallback(
+    call: (provider: IAIProvider) => Promise<AnalysisResult>
+  ): Promise<AnalysisResult> {
     // Reinitialize if no primary provider (handles test env setup)
     if (!this.primaryProvider) {
       try {
@@ -134,7 +156,7 @@ export class AIFactory {
 
     // Try primary provider first
     try {
-      return await this.primaryProvider.analyze(text);
+      return await call(this.primaryProvider);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       this.recordFailure(
@@ -151,7 +173,7 @@ export class AIFactory {
     for (const fallback of this.fallbackProviders) {
       try {
         console.log(`Attempting fallback provider: ${fallback.getName()}`);
-        return await fallback.analyze(text);
+        return await call(fallback);
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         this.recordFailure(fallback.getName(), errorMsg);

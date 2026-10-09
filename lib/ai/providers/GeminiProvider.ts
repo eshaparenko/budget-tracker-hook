@@ -6,6 +6,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { BaseProvider } from './BaseProvider';
 import { AnalysisResult, AnalysisError } from '../types';
+import { PromptType } from '@/lib/config/prompts';
+import { CategoryOption } from '@/lib/types';
 
 export class GeminiProvider extends BaseProvider {
   private genAI: GoogleGenerativeAI | null = null;
@@ -33,7 +35,11 @@ export class GeminiProvider extends BaseProvider {
     return this.analyzeWithPrompt(text, 'validation');
   }
 
-  protected async analyzeWithPrompt(text: string, promptType: 'validation' | 'direct'): Promise<AnalysisResult> {
+  protected async analyzeWithPrompt(
+    text: string,
+    promptType: PromptType,
+    categories?: readonly CategoryOption[]
+  ): Promise<AnalysisResult> {
     this.debugLog = [];
     this.logInfo('=== Gemini Analysis Started ===');
     this.logInfo(`Prompt type: ${promptType}`);
@@ -49,7 +55,7 @@ export class GeminiProvider extends BaseProvider {
       const sanitized = this.sanitizeForAnalysis(text);
       this.logSuccess(`Sanitized text: ${sanitized.substring(0, 80)}...`);
 
-      const prompt = this.buildPrompt(sanitized, promptType);
+      const prompt = this.buildPrompt(sanitized, promptType, categories);
       this.logInfo('Calling Gemini API...');
 
       if (!this.genAI) {

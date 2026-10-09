@@ -5,9 +5,9 @@
 import {
   loadCashewConfig,
   getCashewConfig,
+  getSubcategoriesFor,
+  getCategoryOptions,
   resetCashewConfig,
-  getParsedCashewConfig,
-  isCashewConfigured,
 } from '../cashewConfigLoader';
 
 describe('CashewConfigLoader', () => {
@@ -17,6 +17,7 @@ describe('CashewConfigLoader', () => {
   beforeEach(() => {
     // Reset environment
     process.env = { ...originalEnv };
+    delete process.env.CASHEW_SUBCATEGORIES;
     // Reset singleton
     resetCashewConfig();
   });
@@ -220,64 +221,129 @@ describe('CashewConfigLoader', () => {
     });
   });
 
-  describe('getParsedCashewConfig', () => {
-    test('should return configuration as plain objects', () => {
-      process.env.CASHEW_ACCOUNTS = JSON.stringify(['Mono', 'Privat']);
-      process.env.CASHEW_CATEGORIES = JSON.stringify([
-        'Побут',
-        'Розваги',
-      ]);
+  describe('CASHEW_SUBCATEGORIES', () => {
+    let warnSpy: jest.SpyInstance;
+    let logSpy: jest.SpyInstance;
 
-      const parsed = getParsedCashewConfig();
-
-      expect(parsed.categories).toEqual([
-        'Побут',
-        'Розваги',
-      ]);
+    beforeEach(() => {
+      warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
     });
 
-    test('should return empty when no config', () => {
-      delete process.env.CASHEW_ACCOUNTS;
-      delete process.env.CASHEW_CATEGORIES;
-
-      const parsed = getParsedCashewConfig();
-
-      expect(parsed.accounts).toEqual({});
-      expect(parsed.categories).toEqual([]);
-    });
-  });
-
-  describe('isCashewConfigured', () => {
-    test('should return false when no configuration', () => {
-      delete process.env.CASHEW_ACCOUNTS;
-      delete process.env.CASHEW_CATEGORIES;
-
-      expect(isCashewConfigured()).toBe(false);
+    afterEach(() => {
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
     });
 
-    test('should return true when CASHEW_ACCOUNTS is configured', () => {
-      process.env.CASHEW_ACCOUNTS = JSON.stringify(['Mono']);
-      delete process.env.CASHEW_CATEGORIES;
+    const configure = (categories: string[] | undefined, subcategories: unknown) => {
+      if (categories) process.env.CASHEW_CATEGORIES = JSON.stringify(categories);
+      else delete process.env.CASHEW_CATEGORIES;
+      process.env.CASHEW_SUBCATEGORIES =
+        typeof subcategories === 'string' ? subcategories : JSON.stringify(subcategories);
+      resetCashewConfig();
+      return loadCashewConfig();
+    };
 
-      expect(isCashewConfigured()).toBe(true);
+    test('is empty when not configured', () => {
+      delete process.env.CASHEW_SUBCATEGORIES;
+
+      expect(loadCashewConfig().subcategories).toEqual({});
     });
 
-    test('should return true when CASHEW_CATEGORIES is configured', () => {
-      delete process.env.CASHEW_ACCOUNTS;
-      process.env.CASHEW_CATEGORIES = JSON.stringify([
-        'Побут',
-      ]);
+    test('loads an object of subcategory arrays', () => {
+      const config = configure(['Авто', 'Транспорт'], { Авто: ['Паливо', 'Паркування'], Транспорт: ['Таксі'] });
 
-      expect(isCashewConfigured()).toBe(true);
+      expect(config.subcategories).toEqual({ Авто: ['Паливо', 'Паркування'], Транспорт: ['Таксі'] });
+      expect(warnSpy).not.toHaveBeenCalled();
     });
 
-    test('should return true when both are configured', () => {
-      process.env.CASHEW_ACCOUNTS = JSON.stringify(['Mono']);
-      process.env.CASHEW_CATEGORIES = JSON.stringify([
-        'Побут',
-      ]);
+    test('supports Unicode names with apostrophes and spaces', () => {
+      const config = configure(["Здоров'я"], { "Здоров'я": ['Аптека', 'Лікарі'] });
 
-      expect(isCashewConfigured()).toBe(true);
+      expect(config.subcategories["Здоров'я"]).toEqual(['Аптека', 'Лікарі']);
+    });
+
+    test('ignores invalid JSON with a warning', () => {
+      expect(configure(['Авто'], '{broken').subcategories).toEqual({});
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to parse CASHEW_SUBCATEGORIES'));
+    });
+
+    test.each([['an array', '["Паливо"]'], ['null', 'null'], ['a string', '"Паливо"']])(
+      'ignores %s (must be an object) with a warning',
+      (_label, raw) => {
+        expect(configure(['Авто'], raw).subcategories).toEqual({});
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('must be a JSON object'));
+      }
+    );
+
+    test('skips a category whose value is not an array', () => {
+      const config = configure(['Авто', 'Транспорт'], { Авто: 'Паливо', Транспорт: ['Таксі'] });
+
+      expect(config.subcategories).toEqual({ Транспорт: ['Таксі'] });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"Авто"] is not an array'));
+    });
+
+    test('ignores categories that are not in CASHEW_CATEGORIES', () => {
+      const config = configure(['Авто'], { Авто: ['Паливо'], Невідома: ['X'] });
+
+      expect(config.subcategories).toEqual({ Авто: ['Паливо'] });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"Невідома"] is not in CASHEW_CATEGORIES'));
+    });
+
+    test('keeps all categories when CASHEW_CATEGORIES is not configured', () => {
+      expect(configure(undefined, { Авто: ['Паливо'] }).subcategories).toEqual({ Авто: ['Паливо'] });
+    });
+
+    test('drops non-string, empty and duplicate subcategory entries', () => {
+      const config = configure(['Авто'], { Авто: ['Паливо', ' паливо ', '', 5, null, '  Паркування  '] });
+
+      expect(config.subcategories.Авто).toEqual(['Паливо', 'Паркування']);
+    });
+
+    test('warns when a subcategory name is used under two categories', () => {
+      configure(['Освіта', 'Подорожі'], { Освіта: ['Квитки'], Подорожі: ['Квитки'] });
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"Квитки" is used under both'));
+    });
+
+    test('does not warn when the same name only appears at different levels', () => {
+      // "Розваги" is both a top-level category and a subcategory of "Подорожі": allowed
+      configure(['Розваги', 'Подорожі'], { Подорожі: ['Розваги'] });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    describe('getSubcategoriesFor', () => {
+      test('returns the subcategories of a category, case-insensitively', () => {
+        configure(['Авто'], { Авто: ['Паливо'] });
+
+        expect(getSubcategoriesFor('Авто')).toEqual(['Паливо']);
+        expect(getSubcategoriesFor(' авто ')).toEqual(['Паливо']);
+      });
+
+      test('returns an empty list for an unknown category', () => {
+        configure(['Авто'], { Авто: ['Паливо'] });
+
+        expect(getSubcategoriesFor('Інше')).toEqual([]);
+      });
+    });
+
+    describe('getCategoryOptions', () => {
+      test('lists categories in configured order with their subcategories', () => {
+        configure(['Інше', 'Авто', 'Доходи'], { Авто: ['Паливо'] });
+
+        expect(getCategoryOptions()).toEqual([
+          { name: 'Інше', subcategories: [] },
+          { name: 'Авто', subcategories: ['Паливо'] },
+          { name: 'Доходи', subcategories: [] },
+        ]);
+      });
+
+      test('is empty when no categories are configured', () => {
+        configure(undefined, { Авто: ['Паливо'] });
+
+        expect(getCategoryOptions()).toEqual([]);
+      });
     });
   });
 });
