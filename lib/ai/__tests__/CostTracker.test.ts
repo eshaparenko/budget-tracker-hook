@@ -2,7 +2,20 @@
  * Cost Tracker Tests
  */
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { CostTracker } from '../services/CostTracker';
+
+// Passthrough by default; individual tests override writeFileSync to simulate a
+// read-only filesystem. Mocked at module level because CostTracker holds its own
+// reference to `fs`, so spying on the test's copy would not affect it.
+jest.mock('fs', () => {
+  const actual = jest.requireActual('fs');
+  return { ...actual, writeFileSync: jest.fn(actual.writeFileSync) };
+});
+const realFs: typeof fs = jest.requireActual('fs');
+const writeFileSync = fs.writeFileSync as unknown as jest.Mock;
 
 describe('CostTracker', () => {
   let tracker: CostTracker;
@@ -121,6 +134,74 @@ describe('CostTracker', () => {
 
       expect(tracker.getTotalCost()).toBe(0);
       expect(tracker.getAllCosts()).toHaveLength(0);
+    });
+  });
+
+  describe('read-only filesystem (serverless)', () => {
+    const tmpLog = path.join(os.tmpdir(), '.ai-costs.json');
+    const failWith = (code: string) => () => {
+      throw Object.assign(new Error(code), { code });
+    };
+    let warnSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      writeFileSync.mockReset();
+      writeFileSync.mockImplementation(realFs.writeFileSync);
+      warnSpy.mockRestore();
+      realFs.rmSync(tmpLog, { force: true });
+    });
+
+    it('falls back to the temp folder when the project folder is read-only', () => {
+      writeFileSync.mockImplementation((file: string, ...rest: unknown[]) => {
+        if (!String(file).startsWith(os.tmpdir())) failWith('EROFS')();
+        return (realFs.writeFileSync as (...a: unknown[]) => void)(file, ...rest);
+      });
+
+      const cost = tracker.recordCost('gemini', 'gemini-flash-lite-latest', 100, 50);
+
+      expect(cost.costUSD).toBeGreaterThan(0);
+      expect(tracker.getTotalCost()).toBeGreaterThan(0);
+      expect(realFs.existsSync(tmpLog)).toBe(true);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps using the temp folder for later calls instead of retrying the read-only one', () => {
+      const attempts: string[] = [];
+      writeFileSync.mockImplementation((file: string, ...rest: unknown[]) => {
+        attempts.push(String(file));
+        if (!String(file).startsWith(os.tmpdir())) failWith('EROFS')();
+        return (realFs.writeFileSync as (...a: unknown[]) => void)(file, ...rest);
+      });
+
+      tracker.recordCost('gemini', 'gemini-flash-lite-latest', 100, 50);
+      tracker.recordCost('gemini', 'gemini-flash-lite-latest', 100, 50);
+
+      const readOnlyAttempts = attempts.filter((f) => !f.startsWith(os.tmpdir()));
+      expect(readOnlyAttempts).toHaveLength(1);
+    });
+
+    it('keeps working and warns only once when nothing is writable', () => {
+      writeFileSync.mockImplementation(failWith('EROFS'));
+
+      tracker.recordCost('gemini', 'gemini-flash-lite-latest', 100, 50);
+      tracker.recordCost('gemini', 'gemini-flash-lite-latest', 100, 50);
+      tracker.recordCost('gemini', 'gemini-flash-lite-latest', 100, 50);
+
+      expect(tracker.getAllCosts()).toHaveLength(3);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not hide unrelated write errors behind the fallback', () => {
+      writeFileSync.mockImplementation(failWith('ENOSPC'));
+
+      tracker.recordCost('gemini', 'gemini-flash-lite-latest', 100, 50);
+
+      expect(writeFileSync).toHaveBeenCalledTimes(1); // no retry in the temp folder
+      expect(warnSpy).toHaveBeenCalledTimes(1);
     });
   });
 });

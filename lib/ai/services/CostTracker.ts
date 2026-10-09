@@ -5,9 +5,14 @@
 
 import { CostInfo, PROVIDER_PRICING, TokenPricing } from '../types';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
-const COST_LOG_FILE = path.join(process.cwd(), '.ai-costs.json');
+const LOG_FILE_NAME = '.ai-costs.json';
+const COST_LOG_FILE = path.join(process.cwd(), LOG_FILE_NAME);
+
+/** Errors meaning "this location cannot be written" (e.g. Vercel's read-only /var/task) */
+const NOT_WRITABLE = new Set(['EROFS', 'EACCES', 'EPERM']);
 
 interface CostRecord {
   date: string;
@@ -18,6 +23,8 @@ interface CostRecord {
 export class CostTracker {
   private costs: CostInfo[] = [];
   private totalCost: number = 0;
+  private logFile: string = COST_LOG_FILE;
+  private warnedAboutSave = false;
 
   constructor() {
     this.loadFromFile();
@@ -122,18 +129,40 @@ export class CostTracker {
   }
 
   /**
-   * Save costs to file for persistence
+   * Save costs to file for persistence.
+   * If the project folder is read-only (serverless), fall back to the OS temp
+   * folder once. Persistence is best-effort: a failure never breaks a request,
+   * and it is reported only once instead of on every call.
    */
   private saveToFile(): void {
+    const data: CostRecord = {
+      date: new Date().toISOString(),
+      records: this.costs,
+      totalCostUSD: this.totalCost,
+    };
+    const json = JSON.stringify(data, null, 2);
+
     try {
-      const data: CostRecord = {
-        date: new Date().toISOString(),
-        records: this.costs,
-        totalCostUSD: this.totalCost,
-      };
-      fs.writeFileSync(COST_LOG_FILE, JSON.stringify(data, null, 2));
+      fs.writeFileSync(this.logFile, json);
+      return;
     } catch (error) {
-      console.warn('Failed to save cost tracking data:', error);
+      const code = (error as NodeJS.ErrnoException).code;
+      const fallback = path.join(os.tmpdir(), LOG_FILE_NAME);
+
+      if (code && NOT_WRITABLE.has(code) && this.logFile !== fallback) {
+        this.logFile = fallback;
+        try {
+          fs.writeFileSync(this.logFile, json);
+          return;
+        } catch (fallbackError) {
+          error = fallbackError;
+        }
+      }
+
+      if (!this.warnedAboutSave) {
+        this.warnedAboutSave = true;
+        console.warn('Failed to save cost tracking data (further failures not logged):', error);
+      }
     }
   }
 
@@ -142,8 +171,8 @@ export class CostTracker {
    */
   private loadFromFile(): void {
     try {
-      if (fs.existsSync(COST_LOG_FILE)) {
-        const data = JSON.parse(fs.readFileSync(COST_LOG_FILE, 'utf-8'));
+      if (fs.existsSync(this.logFile)) {
+        const data = JSON.parse(fs.readFileSync(this.logFile, 'utf-8'));
         this.costs = data.records || [];
         this.totalCost = data.totalCostUSD || 0;
       }
@@ -159,8 +188,8 @@ export class CostTracker {
     this.costs = [];
     this.totalCost = 0;
     try {
-      if (fs.existsSync(COST_LOG_FILE)) {
-        fs.unlinkSync(COST_LOG_FILE);
+      if (fs.existsSync(this.logFile)) {
+        fs.unlinkSync(this.logFile);
       }
     } catch (error) {
       console.warn('Failed to delete cost tracking file:', error);
