@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { google } from 'googleapis';
+import { guardApiKey } from '@/lib/utils/apiKeyAuth';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 const auth = new google.auth.GoogleAuth({
@@ -13,6 +14,9 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: 'v4', auth });
 
 export async function POST(request: Request) {
+    const denied = guardApiKey(request);
+    if (denied) return denied;
+
     try {
         const rawText = await request.text();
 
@@ -80,7 +84,10 @@ export async function POST(request: Request) {
     }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+    const denied = guardApiKey(request);
+    if (denied) return denied;
+
     try {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {

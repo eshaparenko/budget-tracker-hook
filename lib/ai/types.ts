@@ -3,7 +3,7 @@
  * Defines the contract for pluggable AI providers
  */
 
-import { ParsedTransaction } from '../types';
+import { CategoryOption, ParsedTransaction } from '../types';
 
 /**
  * Cost tracking information for an API call
@@ -54,10 +54,12 @@ export interface IAIProvider {
   analyze(text: string): Promise<AnalysisResult>;
 
   /**
-   * Analyze transaction directly (no validation if it's a transaction)
-   * Used by Cashew endpoint where input is guaranteed to be a transaction
+   * Analyze text already known to be a transaction (no isTransaction check).
+   * `categories` lists what the model may pick from (each with its allowed
+   * subcategories); the result is not constrained to it, that is the caller's
+   * responsibility.
    */
-  analyzeDirect(text: string): Promise<AnalysisResult>;
+  analyzeDirect(text: string, categories?: readonly CategoryOption[]): Promise<AnalysisResult>;
 
   /**
    * Check if provider is properly configured

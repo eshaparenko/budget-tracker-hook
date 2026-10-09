@@ -6,6 +6,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { BaseProvider } from './BaseProvider';
 import { AnalysisResult, AnalysisError } from '../types';
+import { PromptType } from '@/lib/config/prompts';
+import { CategoryOption } from '@/lib/types';
 
 export class ClaudeProvider extends BaseProvider {
   private client: Anthropic | null = null;
@@ -36,7 +38,11 @@ export class ClaudeProvider extends BaseProvider {
     return this.analyzeWithPrompt(text, 'validation');
   }
 
-  protected async analyzeWithPrompt(text: string, promptType: 'validation' | 'direct'): Promise<AnalysisResult> {
+  protected async analyzeWithPrompt(
+    text: string,
+    promptType: PromptType,
+    categories?: readonly CategoryOption[]
+  ): Promise<AnalysisResult> {
     this.debugLog = [];
     this.logInfo('=== Claude Analysis Started ===');
     this.logInfo(`Prompt type: ${promptType}`);
@@ -52,7 +58,7 @@ export class ClaudeProvider extends BaseProvider {
       const sanitized = this.sanitizeForAnalysis(text);
       this.logSuccess(`Sanitized text: ${sanitized.substring(0, 80)}...`);
 
-      const prompt = this.buildPrompt(sanitized, promptType);
+      const prompt = this.buildPrompt(sanitized, promptType, categories);
       this.logInfo('Calling Claude API...');
 
       if (!this.client) {

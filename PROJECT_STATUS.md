@@ -1,8 +1,8 @@
 # Budget Tracker - Project Status & Architecture
 
-**Last Updated:** October 4, 2026 (Cashew App Integration Complete)  
-**Version:** 0.3.0  
-**Status:** Core system + AI providers + Cashew integration
+**Last Updated:** October 9, 2026 (Cashew subcategories, x-api-key on all webhooks)  
+**Version:** 0.4.0  
+**Status:** Core system + AI providers + Cashew integration; all webhooks x-api-key protected
 
 ---
 
@@ -42,6 +42,8 @@ Input Text (Bank SMS/Notification)
 Response (with optional debug logs)
 ```
 
+**Headers:** `x-api-key: <WEBHOOK_SECRET>` (required; also on its GET health check)
+
 **Query Parameters:**
 - `app`: Source app name (e.g., "Gmail", "Telegram", "Bank")
 - `body`: Transaction text to analyze
@@ -51,6 +53,7 @@ Response (with optional debug logs)
 **Example:**
 ```
 POST /api/webhook/hook-with-params?app=Gmail&source=Email&body=Payment%20500%20UAH%20Starbucks&debug=true
+Header: x-api-key: <WEBHOOK_SECRET>
 ```
 
 ---
@@ -234,65 +237,26 @@ Extracts and stores:
 
 ---
 
-### 🧪 Test Coverage (209 Tests - All Passing)
+### 🧪 Test Coverage (245 Tests - All Passing)
 
-**Test Files:**
-- `lib/services/__tests__/amountExtractor.test.ts` (14 tests)
-  - Symbol-based extraction ($, €, £, ₽)
-  - Edge cases (thousands separators, decimals)
-  
-- `lib/utils/__tests__/validation.test.ts` (30+ tests)
-  - Input sanitization (null bytes, control chars, XSS)
-  - Text normalization (Unicode, spaces)
-  - Error handling
+| Suite | Tests | Covers |
+|---|---|---|
+| `lib/services/__tests__/amountExtractor.test.ts` | 21 | Symbol-based extraction, separators, decimals |
+| `lib/utils/__tests__/validation.test.ts` | 27 | Sanitization (null bytes, control chars, XSS), normalization |
+| `lib/utils/__tests__/apiKeyAuth.test.ts` | 16 | x-api-key: correct/wrong/missing/prefix/case, fails closed when secret unset, guard responses (401/500), no key/secret in responses or logs |
+| `lib/services/__tests__/cashewConfigLoader.test.ts` | 32 | Env loading, bad JSON, Unicode, singleton, CASHEW_SUBCATEGORIES shape/warnings, getSubcategoriesFor, getCategoryOptions |
+| `lib/services/__tests__/accountMapper.test.ts` | 31 | Case-insensitive matching, first-item fallback, passthrough when unconfigured, subcategory must belong to the chosen category |
+| `lib/services/__tests__/cashewLinkGenerator.test.ts` | 24 | Parameter mapping incl. `subcategory`, no `date`/`currency`, encoding, truncation, invalid amounts |
+| `lib/config/__tests__/prompts.test.ts` | 28 | Both prompts, category tree rendering, `$` safety, Cashew rules in prompt, provider wiring and subcategory parsing |
+| `lib/ai/__tests__/CostTracker.test.ts` | 11 | Cost calculation, aggregation, persistence |
+| `lib/ai/__tests__/providers.test.ts` | 24 | Provider init, JSON parsing, normalization |
+| `lib/ai/__tests__/AIFactory.test.ts` | 17 | Singleton, creation, cost tracking, health, config validation |
+| `lib/ai/__tests__/integration.test.ts` | 14 | Fallback scenarios, multi-provider setup |
 
-- `lib/services/__tests__/cashewConfigLoader.test.ts` (9 tests) **NEW**
-  - Config loading from environment
-  - JSON parsing with error handling
-  - Graceful fallback when missing
-
-- `lib/services/__tests__/accountMapper.test.ts` (17 tests) **NEW**
-  - Account mapping with config
-  - Category validation (array-based, no lang-to-lang mapping)
-  - Validation of accounts/categories
-  - Unicode and case-sensitivity handling
-
-- `lib/services/__tests__/cashewLinkGenerator.test.ts` (25 tests) **NEW**
-  - Cashew link generation
-  - URL encoding (special chars, Unicode, Cyrillic)
-  - Transaction validation
-  - Multiple response formats (URL, JSON, HTML)
-  - Date formatting and encoding
-
-- `lib/ai/__tests__/CostTracker.test.ts` (16 tests)
-  - Cost calculation accuracy
-  - Cost aggregation by provider/model
-  - Persistence and recovery
-
-- `lib/ai/__tests__/providers.test.ts` (27 tests)
-  - Provider initialization and configuration
-  - JSON response parsing
-  - Field normalization and validation
-  - Base provider functionality
-
-- `lib/ai/__tests__/AIFactory.test.ts` (18 tests)
-  - Singleton pattern
-  - Provider creation from configuration
-  - Cost tracking and breakdown
-  - Health status monitoring
-  - Configuration validation
-
-- `lib/ai/__tests__/integration.test.ts` (9 tests)
-  - Real-world provider fallback scenarios
-  - Multi-provider setup
-  - Model configuration
-  - Error handling and recovery
-
-**Run tests:**
 ```bash
-npm test           # Run once
-npm run test:watch # Run in watch mode
-npm run test:coverage # Coverage report
+npm test               # Run once
+npm run test:watch     # Watch mode
+npm run test:coverage  # Coverage report
 ```
 
 ---
@@ -327,8 +291,10 @@ budget-tracker/
 ├── app/
 │   ├── api/
 │   │   └── webhook/
-│   │       └── hook-with-params/
-│   │           └── route.ts          # Main webhook endpoint
+│   │       ├── hook-with-params/
+│   │       │   └── route.ts          # Sheets webhook (validation prompt)
+│   │       └── cashew-link/
+│   │           └── route.ts          # Cashew link webhook (x-api-key, direct prompt)
 │   ├── page.tsx                      # Frontend (empty)
 │   ├── layout.tsx                    # Next.js layout
 │   └── globals.css                   # Tailwind styles
@@ -355,15 +321,18 @@ budget-tracker/
 │   │
 │   ├── config/
 │   │   ├── environment.ts
-│   │   └── prompts.ts               # Shared AI prompts
+│   │   ├── prompts.ts               # Validation + direct AI prompts (single source)
+│   │   └── __tests__/prompts.test.ts
 │   │
 │   ├── services/
 │   │   ├── requestParser.ts
 │   │   ├── amountExtractor.ts
 │   │   ├── transactionAnalyzer.ts   # Uses AIFactory
 │   │   ├── transactionTypeDetector.ts
-│   │   └── __tests__/
-│   │       └── amountExtractor.test.ts
+│   │   ├── cashewConfigLoader.ts    # CASHEW_ACCOUNTS / CASHEW_CATEGORIES
+│   │   ├── accountMapper.ts         # Constrain account/category (first item = fallback)
+│   │   ├── cashewLinkGenerator.ts   # Build the Cashew app link
+│   │   └── __tests__/               # amountExtractor, cashewConfigLoader, accountMapper, cashewLinkGenerator
 │   │
 │   ├── repositories/
 │   │   └── sheetsRepository.ts
@@ -371,14 +340,17 @@ budget-tracker/
 │   ├── utils/
 │   │   ├── errorHandler.ts
 │   │   ├── validation.ts
-│   │   └── __tests__/
-│   │       └── validation.test.ts
+│   │   ├── apiKeyAuth.ts            # x-api-key vs WEBHOOK_SECRET
+│   │   ├── urlEncoder.ts
+│   │   └── __tests__/               # validation, apiKeyAuth
 │   │
 │   └── types.ts
 │
 ├── docs/
 │   ├── AI_PROVIDER_SYSTEM.md        # Comprehensive AI system docs
-│   └── (future docs)
+│   ├── API_REFERENCE.md             # HTTP API reference
+│   ├── CASHEW_INTEGRATION.md        # Cashew link integration guide
+│   └── MACRODROID_INTEGRATION.md    # MacroDroid setup
 │
 ├── tmp/
 │   ├── MyFinance.db              # Extracted SQLite database
@@ -387,7 +359,7 @@ budget-tracker/
 │
 ├── .env.example                  # Environment template (NEW)
 ├── .env.local                    # Secrets (not committed)
-├── .ai-costs.json                # Cost tracking (auto-generated)
+├── .ai-costs.json                # Cost tracking (auto-generated, git-ignored)
 ├── package.json
 ├── tsconfig.json
 ├── jest.config.js
@@ -419,6 +391,14 @@ GOOGLE_SHEET_ID=your_sheet_id
 GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
 ```
 
+**Required for `/cashew-link`:**
+```
+WEBHOOK_SECRET=your_shared_secret          # clients send it as the x-api-key header
+CASHEW_ACCOUNTS=["Ukrsib","Mono","Privat"] # first item = fallback account
+CASHEW_CATEGORIES=["Інше","Авто","Доходи"] # first item = fallback category
+CASHEW_SUBCATEGORIES={"Авто":["Паливо"]}   # optional: subcategories per category
+```
+
 ---
 
 ## 🚀 Current Technology Stack
@@ -443,9 +423,9 @@ GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
 5. ✅ **Intent detection** (rejects action requests)
 6. ✅ **Multi-currency** support (all ISO 4217)
 7. ✅ **Google Sheets storage** (9 enriched columns)
-8. ✅ **Cashew link generation** (with account/category mapping)
+8. ✅ **Cashew link generation** (account/category constrained to your Cashew lists, direct AI prompt)
 9. ✅ **Error handling** (comprehensive logging)
-10. ✅ **Unit tests** (209 passing, 9 test suites)
+10. ✅ **Unit tests** (245 passing, 11 test suites)
 11. ✅ **Debug mode** (`?debug=true` parameter with detailed logging)
 12. ✅ **Cost tracking** (per-provider cost monitoring)
 13. ✅ **Fallback logic** (automatic provider switching)
@@ -453,111 +433,123 @@ GOOGLE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
 15. ✅ **Build & Type Safety** (TypeScript, Next.js)
 16. ✅ **URL encoding** (special chars, Unicode, Cyrillic support)
 17. ✅ **JSON response format** (matching hook-with-params pattern)
+18. ✅ **Cashew subcategories** (`CASHEW_SUBCATEGORIES`, AI picks category + subcategory, validated against your config)
+19. ✅ **API key protection** on all webhook endpoints (`x-api-key` header vs `WEBHOOK_SECRET`, fails closed)
 
 ---
 
-### 📱 Cashew App Integration (NEW - October 4, 2026)
+### 📱 Cashew App Integration
 
-**Status:** ✅ Complete - Production Ready
-
-A new webhook endpoint that generates Cashew app-links from MacroDroid transaction notifications:
+**Status:** ✅ Working (last reviewed October 9, 2026)
 
 ```
 GET/POST /api/webhook/cashew-link
 ```
 
-**Features:**
-- ✅ Accepts MacroDroid notifications (app + body parameters)
-- ✅ Analyzes with Gemini AI (with fallback to Claude/OpenAI)
-- ✅ Generates Cashew app-links for quick transaction logging
-- ✅ Returns JSON response with optional debug logging
-- ✅ Supports account mappings (configurable in `.env.local`)
-- ✅ Validates categories (array-based, no language-to-language mapping)
-- ✅ Multi-currency support (all ISO 4217)
-- ✅ URL encoding for special characters and Unicode
+Turns a bank notification (sent by MacroDroid) into a Cashew app link that adds the transaction in one tap.
+Link parameters follow the official docs: <https://cashewapp.web.app/faq.html#app-links>
+(raw page: <https://cashewapp.web.app/assets/docs/automation/app-links.md>).
 
-**Usage Example:**
-```bash
-# Simple request - returns success URL and transaction details
-curl "http://localhost:3000/api/webhook/cashew-link?app=Gmail&body=500%20UAH%20Starbucks"
+**Request**
+- Header `x-api-key: <WEBHOOK_SECRET>` (**required**)
+  - missing/wrong key → `401 {"success":false,"error":"Unauthorized"}`
+  - `WEBHOOK_SECRET` not set on the server → `500` (fails closed, never open)
+  - the key is accepted **only** as a header, never as a query parameter
+- Query parameters:
+  - `app` - **account name** (e.g. `Mono`, `Privat`, `Ukrsib`), matched case-insensitively against `CASHEW_ACCOUNTS`. Missing/unknown → **first item of `CASHEW_ACCOUNTS`**.
+    (Note: on `/hook-with-params` the same parameter means the *source app*.)
+  - `body` - notification text (query parameter or request body)
+  - `debug=true` - include `debugLog` (not returned on 401/500-auth responses)
 
-# With debug logging
-curl "http://localhost:3000/api/webhook/cashew-link?app=Telegram&body=150%20EUR%20coffee&debug=true"
-
-# Response with debug=true
-{
-  "success": true,
-  "url": "https://cashewapp.web.app/addTransaction?amount=500&category=%D0%9F%D0%BE%D0%BA%D1%83%D0%BF%D0%BA%D0%B8&merchant=Starbucks&currency=UAH&date=2026-10-04",
-  "transaction": {
-    "amount": 500,
-    "category": "Покупки",
-    "merchant": "Starbucks",
-    "currency": "UAH"
-  },
-  "debugLog": [
-    "=== Cashew Link Generator Started ===",
-    "Debug mode: ENABLED",
-    "App: Gmail",
-    "→ Sanitizing input",
-    "✓ Body sanitized: \"500 UAH Starbucks...\"",
-    "→ Analyzing transaction with AI",
-    "✓ Analysis complete: 500 UAH → Покупки",
-    "→ Generating Cashew link",
-    "✓ Link generated (185 chars)",
-    "✓ Request completed in 2345ms"
-  ]
-}
+**Pipeline**
+```
+x-api-key check
+  → RequestParser (shared with hook-with-params)
+  → validateTransactionBody (sanitize)
+  → TransactionAnalyzer.analyzeDirect(text, categories + subcategories)   ← DIRECT prompt
+  → amount > 0 check (422 if the AI found no amount)
+  → generateCashewLink → account/category constrained (case-insensitive, first item = fallback);
+    subcategory kept only if it belongs to the chosen category, otherwise dropped
+  → { success, url, transaction }
 ```
 
-**Configuration:**
+**Two AI prompts (lib/config/prompts.ts - single source of truth)**
+
+| | Validation prompt | Direct prompt |
+|---|---|---|
+| Used by | `/hook-with-params` | `/cashew-link` |
+| Input | arbitrary text | already a bank notification |
+| `isTransaction` check | yes | no |
+| Categories | built-in default list | your `CASHEW_CATEGORIES` + `CASHEW_SUBCATEGORIES`, passed in by the route and rendered as a JSON tree `{"Авто":["Паливо",...],...}` |
+| Returns | `isTransaction`, `category`, amount, currency, merchant, details | `category`, `subcategory`, amount, currency, merchant, details |
+| Tuned for Cashew | no | yes: positive amount, ignores balance (`Залишок`/`Баланс`), income category for money received, subcategory only from the chosen category, short title, note ≤ 100 chars, notification text fenced as data |
+
+**Link parameters sent**
+
+| Cashew param | Source |
+|---|---|
+| `amount` | AI amount (always positive; income vs expense comes from the category's polarity in Cashew) |
+| `category` | AI category constrained to `CASHEW_CATEGORIES` (case-insensitive, first item = fallback) |
+| `subcategory` | AI subcategory, only if it is listed under the chosen category in `CASHEW_SUBCATEGORIES`; otherwise omitted (no fallback - the transaction stays in the main category) |
+| `wallet` | `app` constrained to `CASHEW_ACCOUNTS` (Cashew accepts `account` or `wallet`) |
+| `title` | AI `merchant` (≤ 100 chars) |
+| `notes` | AI `details`, e.g. last card digits (≤ 200 chars); omitted when empty |
+
+**Deliberately not sent**
+- `date` - Cashew defaults to the **current date/time on your device**, so there is no server-timezone problem.
+- `currency` - Cashew has no such parameter (currency belongs to the account). The AI still extracts it; it is returned in the JSON only.
+
+**Example**
 ```bash
-# .env.local
-
-# Account name mappings (optional, local-only config)
-# Maps app account names to Cashew account names
-CASHEW_ACCOUNTS='{"Mono":"Monobank","Privat":"PrivatBank","Default":"My Wallet"}'
-
-# Category validation array (optional, no language mapping)
-# If set, AI must match one of these category names
-# If empty/missing, AI returns any category name
-CASHEW_CATEGORIES='["Їжа й хозяйство","Покупки","Розваги","Транспорт","Комунальні послуги","Навчання","Здоров\'я","Розетроби","Подорожі","Розваги","Інше"]'
+curl -G "http://localhost:3000/api/webhook/cashew-link" \
+  -H "x-api-key: $WEBHOOK_SECRET" \
+  --data-urlencode "app=Ukrsib" \
+  --data-urlencode "body=Оплата 405.50 UAH, Pelham. Картка *4417. Залишок: 12 345.67 UAH"
 ```
-
-**Implementation:**
-- `CashewConfigLoader` - Load and validate config from `.env.local`
-- `AccountMapper` - Map accounts/categories with fallback
-- `CashewLinkGenerator` - Generate valid Cashew app-links with date
-- `URLEncoder` - Handle URL encoding for special characters, Cyrillic text
-- Endpoint: `app/api/webhook/cashew-link/route.ts` (GET/POST)
-
-**Response Format:**
 ```json
 {
   "success": true,
-  "url": "https://cashewapp.web.app/addTransaction?...",
-  "transaction": {
-    "amount": 500,
-    "category": "Їжа й хозяйство",
-    "merchant": "Starbucks",
-    "currency": "UAH"
-  },
-  "debugLog": [...]  // Only if debug=true
+  "url": "https://cashewapp.web.app/addTransaction?amount=405.5&category=%D0%9F%D0%BE%D0%BA%D1%83%D0%BF%D0%BA%D0%B8&wallet=Ukrsib&title=Pelham&notes=%D0%9A%D0%B0%D1%80%D1%82%D0%BA%D0%B0%20*4417",
+  "transaction": { "amount": 405.5, "category": "Покупки", "subcategory": "Інші товари", "merchant": "Pelham", "currency": "UAH" }
 }
 ```
+`subcategory` is an empty string when none applies.
 
-**Integration with MacroDroid:**
-1. MacroDroid receives SMS/notification from bank
-2. Triggers HTTP request: `GET /api/webhook/cashew-link?app=Bank&body=500%20UAH%20payment`
-3. Budget tracker analyzes with Gemini AI
-4. Returns Cashew app-link URL
-5. MacroDroid opens link in Cashew app
-6. User taps "Add Transaction" - payment logged instantly
+**Configuration (.env.local)** - see `.env.example` for the full approved structure
+```bash
+WEBHOOK_SECRET=<openssl rand -hex 32>
 
-**Tests:**
-- 51 new tests (CashewConfigLoader: 9, AccountMapper: 17, CashewLinkGenerator: 25)
-- All passing, covering happy path, edge cases, Unicode, error scenarios
+# ORDER MATTERS: first item = fallback. Names must match Cashew (case-insensitive).
+CASHEW_ACCOUNTS=["Ukrsib","Mono","Privat"]
 
-**Total Project Tests:** 209 passing
+# Top-level categories; first item = fallback ("Інше"), include an income category ("Доходи").
+# Values with an apostrophe: wrap in `backticks` (or paste raw in the Vercel dashboard).
+CASHEW_CATEGORIES=`["Інше","Продукти","Кафе та ресторани","Транспорт","Авто","Дім","Рахунки та збори","Здоров'я","Покупки","Догляд за собою","Розваги","Підписки","Освіта","Подорожі","Подарунки","Благодійність","Доходи"]`
+
+# Optional: subcategories per category (keys must be in CASHEW_CATEGORIES)
+CASHEW_SUBCATEGORIES=`{"Авто":["Паливо","Тех обслуговування","Паркування"],"Транспорт":["Таксі","Громадський транспорт","Потяги та автобуси"],...}`
+```
+Subcategory names should be unique across categories: Cashew resolves `subcategory` by name and takes the first match (the loader warns about duplicates).
+Config is read once at startup: **restart the server after editing**.
+
+**Implementation**
+- `app/api/webhook/cashew-link/route.ts` - thin handler (auth → parse → analyze → link)
+- `lib/utils/apiKeyAuth.ts` - `checkApiKey()` + `guardApiKey()` (constant-time, fails closed, header-only), shared by all webhook routes
+- `lib/services/cashewConfigLoader.ts` - loads `CASHEW_ACCOUNTS` / `CASHEW_CATEGORIES` / `CASHEW_SUBCATEGORIES`, `getCategoryOptions()` for the prompt
+- `lib/services/accountMapper.ts` - case-insensitive constraint with first-item fallback; `validateSubcategory()` keeps a subcategory only under its own category; reports `accountMatched` / `categoryMatched` / `subcategoryMatched`
+- `lib/services/cashewLinkGenerator.ts` - builds the link, returns `{ url, mapping }`
+- `lib/utils/urlEncoder.ts` - query-string encoding, sanitizing, truncation
+- `lib/config/prompts.ts` + `BaseProvider.analyzeDirect()` → `AIFactory.analyzeDirect()` → `TransactionAnalyzer.analyzeDirect()`
+
+**Design review (Oct 9)** - removed ~12 unused exports and their tests (YAGNI); category is constrained in one place (DRY); the AI layer no longer imports Cashew config (DIP - categories are passed in); the route reuses `RequestParser` and `validateTransactionBody` like the first endpoint. `/hook-with-params` behaviour is unchanged (its prompt was verified byte-identical to the pre-refactor one).
+
+**MacroDroid flow**
+1. MacroDroid receives the bank notification
+2. HTTP GET to `/api/webhook/cashew-link?app=<account>&body=<text>` with header `x-api-key`
+3. Server returns JSON with `url`
+4. MacroDroid opens `url` in Cashew → transaction is added with your device's current time
+
+**Tests:** CashewConfigLoader 32, AccountMapper 31, CashewLinkGenerator 24, apiKeyAuth 16, prompts 28
 
 ---
 
@@ -583,14 +575,26 @@ CASHEW_CATEGORIES='["Їжа й хозяйство","Покупки","Розва�
    - No provider load balancing
    - Cost tracking local only (not sent to remote analytics)
 
+5. **Cashew link limitations:**
+   - Cashew has no currency parameter: the amount is recorded in the *account's* currency. A EUR payment sent to a UAH account is stored as that number of UAH.
+   - Account/category/subcategory names must exist in Cashew (name match, case-insensitive). An unknown category makes Cashew prompt you instead of adding silently.
+   - A subcategory name that appears under two categories is ambiguous in Cashew (first match wins). Names that repeat across levels (e.g. top-level "Розваги" and "Подорожі → Розваги") are valid for Cashew but can make the AI's choice less obvious.
+   - Unknown `app` values silently use the first account (`Ukrsib`); check `debug=true` output if a transaction lands in the wrong account.
+   - Transaction time is when the link is opened, not when the bank notification arrived.
+
+6. **Authentication:** every `/api/webhook/*` handler (`/cashew-link`, `/hook-with-params`, `/finance-hook`, GET and POST) starts with `guardApiKey()` from `lib/utils/apiKeyAuth.ts`. The key is header-only (`x-api-key`), compared in constant time, and an unset `WEBHOOK_SECRET` rejects everything. A new webhook route must call the guard as its first line - there is no global middleware, so it is not automatic. (The very first version of `finance-hook` had a similar check; it was removed in commit `675dbe6`.)
+
 ---
 
 ## 🎯 Next Steps (Prioritized)
 
 ### Phase 1: Testing & Validation (Current)
-- [ ] Run full test suite (165 tests)
-- [ ] Test Cashew endpoint manually with curl/Postman
-- [ ] Verify all 114+ existing tests still pass
+- [x] Full test suite green (245 tests, 11 suites)
+- [x] Cashew endpoint verified with curl (auth, fallback account, balance-ignoring, income category)
+- [ ] Verify the generated link on the device end-to-end (account, category, time, notes)
+- [x] `WEBHOOK_SECRET` set in `.env.local`
+- [x] `x-api-key` check on all `/api/webhook/*` endpoints (shared `guardApiKey`)
+- [ ] Add the `x-api-key` header to **every** MacroDroid HTTP action (`/hook-with-params` too, or it will get 401)
 
 ### Phase 2: Production Deployment
 - [ ] Deploy to production
@@ -617,6 +621,9 @@ CASHEW_CATEGORIES='["Їжа й хозяйство","Покупки","Розва�
 ## 📚 Documentation
 
 - [`docs/AI_PROVIDER_SYSTEM.md`](docs/AI_PROVIDER_SYSTEM.md) - Comprehensive AI system documentation
+- [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) - HTTP API reference
+- [`docs/CASHEW_INTEGRATION.md`](docs/CASHEW_INTEGRATION.md) - Cashew link integration guide
+- [`docs/MACRODROID_INTEGRATION.md`](docs/MACRODROID_INTEGRATION.md) - MacroDroid setup
 - [`lib/ai/README.md`](lib/ai/README.md) - Quick reference for AI providers
 - [`.env.example`](.env.example) - Environment configuration template
 
@@ -640,11 +647,16 @@ npm run lint            # ESLint check
 # Webhook Testing
 curl -X POST \
   "http://localhost:3000/api/webhook/hook-with-params?app=Gmail&body=Payment%20150%20UAH%20to%20Starbucks&debug=true" \
+  -H "x-api-key: $WEBHOOK_SECRET" \
   -H "Content-Type: application/json" \
   -d '{}'
 
+# Cashew link (needs WEBHOOK_SECRET)
+curl -G "http://localhost:3000/api/webhook/cashew-link" -H "x-api-key: $WEBHOOK_SECRET" \
+  --data-urlencode "app=Ukrsib" --data-urlencode "body=230 Kastrati, bensina UAH" --data-urlencode "debug=true"
+
 # Health Check
-curl http://localhost:3000/api/webhook/hook-with-params
+curl -H "x-api-key: $WEBHOOK_SECRET" http://localhost:3000/api/webhook/hook-with-params
 
 # View Costs
 tail -100 .ai-costs.json
@@ -657,8 +669,8 @@ tail -100 .ai-costs.json
 | Metric | Value |
 |--------|-------|
 | Total Lines of Code | ~4,200+ |
-| Test Coverage | 209 passing tests (all passing) |
-| Test Files | 9 test suites |
+| Test Coverage | 245 passing tests (all passing) |
+| Test Files | 11 test suites |
 | AI Providers Supported | 3 (Gemini, Claude, OpenAI) |
 | Fallback Chains | Unlimited (configurable) |
 | Transaction Categories | 11 predefined |
@@ -666,7 +678,7 @@ tail -100 .ai-costs.json
 | Build Time | ~15s |
 | Test Suite Time | ~3.8s |
 | Webhook Endpoints | 2 (hook-with-params, cashew-link) |
-| Core Services | 8 services (Analyzer, AmountExtractor, TransactionTypeDetector, CashewConfigLoader, AccountMapper, CashewLinkGenerator, CostTracker, RequestParser) |
+| Core Services | 8 services (Analyzer, AmountExtractor, TransactionTypeDetector, CashewConfigLoader, AccountMapper, CashewLinkGenerator, CostTracker, RequestParser) + apiKeyAuth util |
 
 ---
 

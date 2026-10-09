@@ -14,8 +14,15 @@ export interface Transaction {
   details?: string; // Additional details (card number, reference, etc.)
 }
 
+/** A category the AI may pick, with the subcategories allowed under it */
+export interface CategoryOption {
+  name: string;
+  subcategories?: readonly string[];
+}
+
 export interface ParsedTransaction {
   category: string;
+  subcategory?: string; // Only set by the direct (Cashew) flow; '' = none
   amount: number;
   currency: string;
   merchant: string;
