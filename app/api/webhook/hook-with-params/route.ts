@@ -13,6 +13,7 @@ import { getEnvironmentConfig } from '@/lib/config/environment';
 import { Logger, ErrorMapper, ResponseBuilder, Timer } from '@/lib/utils/errorHandler';
 import { validateAndSanitize, validateTransactionBody } from '@/lib/utils/validation';
 import { Transaction } from '@/lib/types';
+import { guardApiKey } from '@/lib/utils/apiKeyAuth';
 
 /**
  * POST /api/webhook/hook-with-params
@@ -25,6 +26,9 @@ import { Transaction } from '@/lib/types';
  * - source: Source type (e.g., "Email", "Telegram", "Viber", "Bank", "Other") [optional, defaults to "Other"]
  * - debug: Set to "true" to include debug logs in response [optional]
  * 
+ * Headers:
+ * - x-api-key: must equal WEBHOOK_SECRET (401 otherwise; 500 if WEBHOOK_SECRET is unset)
+ *
  * Request Body:
  * - Empty JSON object {} required (for proper content-type handling)
  * 
@@ -34,6 +38,10 @@ import { Transaction } from '@/lib/types';
  * POST /api/webhook/hook-with-params?app=Bank&source=Bank&body=Transfer%20500%20UAH
  */
 export async function POST(request: Request) {
+  // Authenticate first: nothing below (parsing, paid AI call, Sheets write) runs for strangers.
+  const denied = guardApiKey(request);
+  if (denied) return denied;
+
   const timer = new Timer();
   const logger = new Logger();
   const debugLog: string[] = [];
@@ -246,9 +254,12 @@ export async function POST(request: Request) {
 /**
  * GET /api/webhook/hook-with-params
  * 
- * Health check - returns available Gemini models
+ * Health check - AI provider status (requires x-api-key)
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = guardApiKey(request);
+  if (denied) return denied;
+
   const debugLog: string[] = [];
 
   try {
