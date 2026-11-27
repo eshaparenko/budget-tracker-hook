@@ -580,7 +580,7 @@ Config is read once at startup: **restart the server after editing**.
    - Cost tracking local only (not sent to remote analytics)
 
 5. **Cashew link limitations:**
-   - Reference FX may differ from bank settlement. Verify real Ukrsib notification formats and the deployed `CASHEW_ACCOUNT_CURRENCIES` mapping before rollout.
+   - Reference FX may differ from bank settlement. User-supplied Ukrsib examples cover UAH, USD, EUR, and ALL purchases and skipped transfers, confirmation requests, and card holds. The deployed `CASHEW_ACCOUNT_CURRENCIES` mapping still needs verification.
    - Account/category/subcategory names must exist in Cashew (name match, case-insensitive). An unknown category makes Cashew prompt you instead of adding silently.
    - A subcategory name that appears under two categories is ambiguous in Cashew (first match wins). Names that repeat across levels (e.g. top-level "Розваги" and "Подорожі → Розваги") are valid for Cashew but can make the AI's choice less obvious.
    - Unknown `app` values silently use the first account (`Ukrsib`); check `debug=true` output if a transaction lands in the wrong account.

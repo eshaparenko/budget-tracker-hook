@@ -26,6 +26,8 @@ import { RequestParser, RequestParserError } from '@/lib/services/requestParser'
 import { TransactionAnalyzer } from '@/lib/services/transactionAnalyzer';
 import { CurrencyConversionError } from '@/lib/services/currencyConversion';
 import { generateCashewLink } from '@/lib/services/cashewLinkGenerator';
+import { mapAccount } from '@/lib/services/accountMapper';
+import { classifyUkrsibNotification } from '@/lib/services/ukrsibNotification';
 import { getCategoryOptions } from '@/lib/services/cashewConfigLoader';
 import { Logger, Timer } from '@/lib/utils/errorHandler';
 import { validateTransactionBody } from '@/lib/utils/validation';
@@ -73,6 +75,19 @@ export async function POST(request: Request) {
       return fail(400, 'Invalid transaction body', validation.errors);
     }
 
+    const notification = mapAccount(app).account.toLowerCase() === 'ukrsib'
+      ? classifyUkrsibNotification(validation.sanitized)
+      : undefined;
+
+    if (notification?.kind === 'skip') {
+      return NextResponse.json({
+        success: false,
+        skipped: true,
+        reason: notification.reason,
+        ...(debugEnabled && { debugLog: [`Skipped Ukrsib notification: ${notification.reason}`] }),
+      });
+    }
+
     // Step 3: analyze with the direct prompt (input is already a notification;
     // the model picks from the user's Cashew categories and their subcategories)
     debugLog.push('→ Analyzing transaction with AI (direct prompt)');
@@ -89,6 +104,16 @@ export async function POST(request: Request) {
         'Failed to analyze transaction',
         error instanceof Error ? error.message : 'unknown'
       );
+    }
+
+    if (notification?.kind === 'payment') {
+      parsed = {
+        ...parsed,
+        amount: notification.amount,
+        currency: notification.currency,
+        settlementAmount: undefined,
+        settlementCurrency: undefined,
+      };
     }
 
     if (!(parsed.amount > 0)) {

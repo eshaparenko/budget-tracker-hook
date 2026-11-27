@@ -110,6 +110,10 @@ CASHEW_SUBCATEGORIES={"Транспорт":["Таксі","Громадський
 - The config is read once at server start: **restart after editing**.
 - Names must exist in Cashew (name search, case-insensitive). An unknown category makes Cashew show a prompt instead of adding the transaction silently.
 
+### Ukrsib notifications
+
+With `app=Ukrsib`, the observed `Oplata:` payment format takes the original amount and currency from `Suma` (including values such as `10.80EUR`). `Dostupno` reports the available balance and is ignored. Transfers (`Perekaz koshtiv:`), confirmation requests (`Для підтвердження операції ...`), and card holds (`Blokuvannia:`) return `skipped: true` with HTTP 200 and no link. Transfers can still be entered manually.
+
 ### Wallet currency conversion
 
 1. Use an explicit debit or credit amount in the mapped wallet currency when both settlement fields are present.

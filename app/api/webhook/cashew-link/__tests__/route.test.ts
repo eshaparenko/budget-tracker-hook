@@ -64,26 +64,76 @@ test('uses the fallback wallet settlement for a refund and preserves original re
   expect(fetchQuote).not.toHaveBeenCalled();
 });
 
-test('converts an ALL purchase with only a UAH balance into the mapped UAH wallet', async () => {
-  analyzeDirect.mockResolvedValue({ ...transaction, currency: 'ALL', category: 'Other', subcategory: '' });
+test.each([
+  ['8.00USD', 8, 'USD', 45.088, 360.70],
+  ['10.80EUR', 10.8, 'EUR', 49.454, 534.10],
+  ['2998.00ALL', 2998, 'ALL', 0.55144, 1653.22],
+  ['759.99UAH', 759.99, 'UAH', 1, 759.99],
+])('takes Suma from an Ukrsib payment in %s and ignores Dostupno', async (sum, amount, currency, rate, walletAmount) => {
+  analyzeDirect.mockResolvedValue({
+    ...transaction,
+    amount: 9204.62,
+    currency: 'UAH',
+    settlementAmount: 9204.62,
+    settlementCurrency: 'UAH',
+    category: 'Other',
+    subcategory: '',
+  });
   const date = new Date().toISOString().slice(0, 10);
-  jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({
-    base: 'ALL', quote: 'UAH', rate: 0.55, date,
+  const fetchQuote = jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({
+    base: currency, quote: 'UAH', rate, date,
   }));
 
   const result = await POST(new Request(`${endpoint}?app=ukrsib`, {
     method: 'POST',
     headers: { 'x-api-key': 'test-secret' },
-    body: 'Purchase 10 ALL, Available 9000 UAH',
+    body: 'Oplata: TEST MARKET 27.11.2026 11:11:01. Kartka ****0000. Suma ' + sum +
+      '.\nDostupno 9204.62UAH.Detali: ukrsibbank.com',
   }));
   expect(result.status).toBe(200);
   const body = await result.json();
-  expect(body.transaction).toMatchObject({ amount: 10, currency: 'ALL' });
+  expect(body.transaction).toMatchObject({ amount, currency });
   expect(body.conversion).toEqual({
-    source: 'fx', walletAmount: 5.5, walletCurrency: 'UAH', provider: 'Frankfurter', rateDate: date, rate: 0.55,
+    source: currency === 'UAH' ? 'same_currency' : 'fx',
+    walletAmount,
+    walletCurrency: 'UAH',
+    ...(currency === 'UAH' ? {} : { provider: 'Frankfurter', rateDate: date, rate }),
   });
-  expect(new URL(body.url).searchParams.get('amount')).toBe('5.5');
+  expect(new URL(body.url).searchParams.get('amount')).toBe(String(walletAmount));
+  expect(fetchQuote).toHaveBeenCalledTimes(currency === 'UAH' ? 0 : 1);
   expect(body).not.toHaveProperty('debugLog');
+});
+
+test.each([
+  ['transfer', 'Perekaz koshtiv: 08.11.2026 23:00:20 z rakhunku UA***0000UAH na sumu 500.00UAH na rakhunok UA***1111EUR na sumu 10.00EUR. Dostupni zalyshky: 900.00UAH ta 50.00EUR'],
+  ['confirmation', 'Для підтвердження операції обміну валюти в сумі 10.00 EUR введіть код 00000. Довідка - 729.'],
+  ['card_hold', 'Blokuvannia: TEST MARKET. Kartka ****0000. Suma 1081.00UAH. Dostupno 9000.00UAH. ONLINE.UKRSIBBANK.COM'],
+])('skips an Ukrsib %s before AI or FX', async (reason, notification) => {
+  const fetchQuote = jest.spyOn(globalThis, 'fetch');
+  const url = new URL(endpoint);
+  url.search = new URLSearchParams({ app: 'ukrsib', body: notification, debug: 'true' }).toString();
+  const result = await GET(new Request(url, { headers: { 'x-api-key': 'test-secret' } }));
+
+  expect(result.status).toBe(200);
+  expect(await result.json()).toEqual({
+    success: false,
+    skipped: true,
+    reason,
+    debugLog: ['Skipped Ukrsib notification: ' + reason],
+  });
+  expect(analyzeDirect).not.toHaveBeenCalled();
+  expect(fetchQuote).not.toHaveBeenCalled();
+});
+
+test('preserves the analysis path for a different mapped wallet', async () => {
+  const result = await POST(new Request(`${endpoint}?app=Euro%20wallet`, {
+    method: 'POST',
+    headers: { 'x-api-key': 'test-secret' },
+    body: 'Perekaz koshtiv: 10.00EUR',
+  }));
+  expect(result.status).toBe(200);
+  expect((await result.json()).success).toBe(true);
+  expect(analyzeDirect).toHaveBeenCalledTimes(1);
 });
 
 test('rejects unauthorized callers before analysis or FX', async () => {
@@ -106,7 +156,7 @@ test.each([undefined, '{broken', '{}', '{"Ukrsib":"ZZZ"}'])('returns 500 for inv
 
 test.each([
   ['', 422, 'Unknown transaction currency'],
-  ['USD', 502, 'Unable to get a fresh exchange rate for USD/UAH'],
+  ['GBP', 502, 'Unable to get a fresh exchange rate for GBP/UAH'],
 ])('surfaces conversion errors without producing a link', async (currency, status, error) => {
   analyzeDirect.mockResolvedValue({ ...transaction, currency });
   jest.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('FX unavailable'));
