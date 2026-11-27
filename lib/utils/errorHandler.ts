@@ -16,7 +16,7 @@ export interface ErrorContext {
   severity: ErrorSeverity;
   statusCode: number;
   userMessage: string;
-  debugInfo?: Record<string, any>;
+  debugInfo?: Record<string, unknown>;
   stack?: string;
 }
 
@@ -27,7 +27,7 @@ export class Logger {
   private logs: string[] = [];
   private isDevelopment = process.env.NODE_ENV === 'development';
 
-  log(message: string, data?: any): void {
+  log(message: string, data?: unknown): void {
     const timestamp = new Date().toISOString();
     const logEntry = `[${timestamp}] ${message}`;
     this.logs.push(logEntry);
@@ -39,7 +39,7 @@ export class Logger {
     }
   }
 
-  error(message: string, error?: Error | any): void {
+  error(message: string, error?: unknown): void {
     const timestamp = new Date().toISOString();
     const errorMsg = error instanceof Error ? error.message : String(error);
     const logEntry = `[${timestamp}] ERROR: ${message} - ${errorMsg}`;
@@ -53,7 +53,7 @@ export class Logger {
     }
   }
 
-  debug(message: string, data?: any): void {
+  debug(message: string, data?: unknown): void {
     if (this.isDevelopment) {
       const timestamp = new Date().toISOString();
       console.log(`[${timestamp}] DEBUG: ${message}`, data || '');
@@ -97,7 +97,8 @@ export class AppError extends Error {
  * Error mapper - converts different error types to AppError
  */
 export class ErrorMapper {
-  static map(error: unknown, debugLog: string[]): AppError {
+  static map(error: unknown, _debugLog: string[]): AppError {
+    void _debugLog;
     // Handle custom application errors
     if (error instanceof AppError) {
       return error;
@@ -203,7 +204,7 @@ export class RepositoryError extends Error {
  */
 export class ResponseBuilder {
   static success(
-    data: any,
+    data: WebhookResponse['parsedData'],
     debugLog: string[]
   ): NextResponse<WebhookResponse> {
     return NextResponse.json(

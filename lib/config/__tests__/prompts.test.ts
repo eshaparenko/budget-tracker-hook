@@ -27,6 +27,15 @@ describe('prompts', () => {
     }
   });
 
+  test('both prompts distinguish explicit settlement from balance and credit limits', () => {
+    for (const prompt of [buildValidationPrompt('x', names), buildDirectPrompt('x', options)]) {
+      expect(prompt).toContain('"settlementAmount"');
+      expect(prompt).toContain('"settlementCurrency"');
+      expect(prompt).toContain('Never infer a settlement');
+      expect(prompt).toContain('Ignore balances, available funds and credit limits');
+    }
+  });
+
   test('validation prompt lists categories comma-separated (unchanged format)', () => {
     expect(buildValidationPrompt('x', names)).toContain('select ONE from: Побут, Авто');
   });
@@ -155,6 +164,21 @@ describe('BaseProvider prompt wiring', () => {
       expect(bad.category).toBe('Інше');
       expect(good.category).toBe('Паливо');
       expect('subcategory' in good).toBe(false);
+    });
+
+    test.each(['direct', 'validation'] as const)('%s parse preserves both monetary pairs', (type) => {
+      const result = parse({
+        amount: 10, currency: 'EUR', settlementAmount: 450, settlementCurrency: ' uah ',
+      }, type);
+      expect(result).toMatchObject({
+        amount: 10, currency: 'EUR', settlementAmount: 450, settlementCurrency: 'UAH',
+      });
+    });
+
+    test('omits an incomplete settlement pair', () => {
+      const result = parse({ amount: 10, currency: 'EUR', settlementAmount: 450 }, 'direct');
+      expect(result).not.toHaveProperty('settlementAmount');
+      expect(result).not.toHaveProperty('settlementCurrency');
     });
 
     test('direct parse does not require isTransaction', () => {

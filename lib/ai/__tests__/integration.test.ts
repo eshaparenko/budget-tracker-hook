@@ -4,15 +4,13 @@
  */
 
 import { AIFactory } from '../AIFactory';
-import { GeminiProvider } from '../providers/GeminiProvider';
-import { AnalysisError } from '../types';
 
 describe('AI Provider Integration', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    (AIFactory as any)['instance'] = undefined;
+    Reflect.deleteProperty(AIFactory, 'instance');
   });
 
   afterEach(() => {
@@ -123,7 +121,6 @@ describe('AI Provider Integration', () => {
       process.env.AI_PRIMARY_PROVIDER = 'gemini';
 
       const factory = AIFactory.getInstance();
-      const initialFailures = factory.getFailureLog().length;
 
       // Log should exist (might be empty or have previous failures)
       expect(Array.isArray(factory.getFailureLog())).toBe(true);

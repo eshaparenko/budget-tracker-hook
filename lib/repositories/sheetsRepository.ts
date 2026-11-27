@@ -3,7 +3,7 @@
  * Handles all data persistence to Google Sheets
  */
 
-import { google } from 'googleapis';
+import { google, type sheets_v4 } from 'googleapis';
 import { Transaction } from '../types';
 
 export class SheetsRepositoryError extends Error {
@@ -14,7 +14,7 @@ export class SheetsRepositoryError extends Error {
 }
 
 export class SheetsRepository {
-  private sheets: any;
+  private sheets: sheets_v4.Sheets;
   private spreadsheetId: string;
   private debugLog: string[] = [];
 

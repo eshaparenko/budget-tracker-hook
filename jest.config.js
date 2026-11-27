@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- Jest loads this CommonJS config.
 const nextJest = require('next/jest')
 
 const createJestConfig = nextJest({

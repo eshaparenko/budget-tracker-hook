@@ -470,7 +470,8 @@ x-api-key check
   → amount > 0 check (422 if the AI found no amount)
   → generateCashewLink → account/category constrained (case-insensitive, first item = fallback);
     subcategory kept only if it belongs to the chosen category, otherwise dropped
-  → { success, url, transaction }
+  → resolve wallet currency, use settlement or FX when needed, round to wallet minor units
+  → { success, url, transaction, conversion }
 ```
 
 **Two AI prompts (lib/config/prompts.ts - single source of truth)**
@@ -481,23 +482,23 @@ x-api-key check
 | Input | arbitrary text | already a bank notification |
 | `isTransaction` check | yes | no |
 | Categories | built-in default list | your `CASHEW_CATEGORIES` + `CASHEW_SUBCATEGORIES`, passed in by the route and rendered as a JSON tree `{"Авто":["Паливо",...],...}` |
-| Returns | `isTransaction`, `category`, amount, currency, merchant, details | `category`, `subcategory`, amount, currency, merchant, details |
+| Returns | `isTransaction`, `category`, amount, currency, optional settlement pair, merchant, details | `category`, `subcategory`, amount, currency, optional settlement pair, merchant, details |
 | Tuned for Cashew | no | yes: positive amount, ignores balance (`Залишок`/`Баланс`), income category for money received, subcategory only from the chosen category, short title, note ≤ 100 chars, notification text fenced as data |
 
 **Link parameters sent**
 
 | Cashew param | Source |
 |---|---|
-| `amount` | AI amount (always positive; income vs expense comes from the category's polarity in Cashew) |
+| `amount` | Positive amount in the mapped wallet currency. Cashew applies the category's income or expense polarity. |
 | `category` | AI category constrained to `CASHEW_CATEGORIES` (case-insensitive, first item = fallback) |
 | `subcategory` | AI subcategory, only if it is listed under the chosen category in `CASHEW_SUBCATEGORIES`; otherwise omitted (no fallback - the transaction stays in the main category) |
 | `wallet` | `app` constrained to `CASHEW_ACCOUNTS` (Cashew accepts `account` or `wallet`) |
 | `title` | AI `merchant` (≤ 100 chars) |
-| `notes` | AI `details`, e.g. last card digits (≤ 200 chars); omitted when empty |
+| `notes` | Original amount and currency when changed, followed by available details |
 
 **Deliberately not sent**
 - `date` - Cashew defaults to the **current date/time on your device**, so there is no server-timezone problem.
-- `currency` - Cashew has no such parameter (currency belongs to the account). The AI still extracts it; it is returned in the JSON only.
+- `currency` - Cashew has no such parameter (currency belongs to the account). The JSON reports both the original currency and the wallet currency.
 
 **Example**
 ```bash
@@ -510,7 +511,8 @@ curl -G "http://localhost:3000/api/webhook/cashew-link" \
 {
   "success": true,
   "url": "https://cashewapp.web.app/addTransaction?amount=405.5&category=%D0%9F%D0%BE%D0%BA%D1%83%D0%BF%D0%BA%D0%B8&wallet=Ukrsib&title=Pelham&notes=%D0%9A%D0%B0%D1%80%D1%82%D0%BA%D0%B0%20*4417",
-  "transaction": { "amount": 405.5, "category": "Покупки", "subcategory": "Інші товари", "merchant": "Pelham", "currency": "UAH" }
+  "transaction": { "amount": 405.5, "category": "Покупки", "subcategory": "Інші товари", "merchant": "Pelham", "currency": "UAH" },
+  "conversion": { "walletAmount": 405.5, "walletCurrency": "UAH", "source": "same_currency" }
 }
 ```
 `subcategory` is an empty string when none applies.
@@ -521,6 +523,7 @@ WEBHOOK_SECRET=<openssl rand -hex 32>
 
 # ORDER MATTERS: first item = fallback. Names must match Cashew (case-insensitive).
 CASHEW_ACCOUNTS=["Ukrsib","Mono","Privat"]
+CASHEW_ACCOUNT_CURRENCIES={"Ukrsib":"UAH","Mono":"UAH","Privat":"UAH"}
 
 # Top-level categories; first item = fallback ("Інше"), include an income category ("Доходи").
 # Values with an apostrophe: wrap in `backticks` (or paste raw in the Vercel dashboard).
@@ -537,7 +540,8 @@ Config is read once at startup: **restart the server after editing**.
 - `lib/utils/apiKeyAuth.ts` - `checkApiKey()` + `guardApiKey()` (constant-time, fails closed, header-only), shared by all webhook routes
 - `lib/services/cashewConfigLoader.ts` - loads `CASHEW_ACCOUNTS` / `CASHEW_CATEGORIES` / `CASHEW_SUBCATEGORIES`, `getCategoryOptions()` for the prompt
 - `lib/services/accountMapper.ts` - case-insensitive constraint with first-item fallback; `validateSubcategory()` keeps a subcategory only under its own category; reports `accountMatched` / `categoryMatched` / `subcategoryMatched`
-- `lib/services/cashewLinkGenerator.ts` - builds the link, returns `{ url, mapping }`
+- `lib/services/cashewLinkGenerator.ts` - builds the link, returns `{ url, mapping, conversion }`
+- `lib/services/currencyConversion.ts` - chooses explicit wallet-currency settlement, same-currency amount, or fresh Frankfurter FX. The latter supports ALL/UAH where the tested NBU-only lookup did not.
 - `lib/utils/urlEncoder.ts` - query-string encoding, sanitizing, truncation
 - `lib/config/prompts.ts` + `BaseProvider.analyzeDirect()` → `AIFactory.analyzeDirect()` → `TransactionAnalyzer.analyzeDirect()`
 
@@ -576,7 +580,7 @@ Config is read once at startup: **restart the server after editing**.
    - Cost tracking local only (not sent to remote analytics)
 
 5. **Cashew link limitations:**
-   - Cashew has no currency parameter: the amount is recorded in the *account's* currency. A EUR payment sent to a UAH account is stored as that number of UAH.
+   - Reference FX may differ from bank settlement. Verify real Ukrsib notification formats and the deployed `CASHEW_ACCOUNT_CURRENCIES` mapping before rollout.
    - Account/category/subcategory names must exist in Cashew (name match, case-insensitive). An unknown category makes Cashew prompt you instead of adding silently.
    - A subcategory name that appears under two categories is ambiguous in Cashew (first match wins). Names that repeat across levels (e.g. top-level "Розваги" and "Подорожі → Розваги") are valid for Cashew but can make the AI's choice less obvious.
    - Unknown `app` values silently use the first account (`Ukrsib`); check `debug=true` output if a transaction lands in the wrong account.

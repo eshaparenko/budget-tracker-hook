@@ -2,12 +2,16 @@
  * Cashew Configuration Loader
  * Loads from environment variables:
  *   CASHEW_ACCOUNTS       JSON array of account names
+ *   CASHEW_ACCOUNT_CURRENCIES  JSON object mapping wallet names to currencies
  *   CASHEW_CATEGORIES     JSON array of category names
  *   CASHEW_SUBCATEGORIES  JSON object { "<category>": ["<subcategory>", ...] }
  * Supports graceful fallback if configuration is missing
  */
 
+import { CurrencyConversionError, normalizeCurrency } from './currencyConversion';
+
 export interface CashewConfig {
+  accountCurrencies: ReadonlyMap<string, unknown>;
   accounts: string[]; // Array of allowed account names (no mapping)
   categories: string[]; // Array of allowed category names (any language)
   subcategories: Record<string, string[]>; // Allowed subcategories per category
@@ -111,6 +115,31 @@ function parseSubcategories(
   return result;
 }
 
+function parseAccountCurrencies(raw: string | undefined): ReadonlyMap<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return new Map();
+
+    const currencies = new Map<string, unknown>();
+    for (const [name, currency] of Object.entries(parsed)) {
+      const key = name.trim().toLowerCase();
+      if (!key || currencies.has(key)) return new Map();
+      currencies.set(key, currency);
+    }
+    return currencies;
+  } catch {
+    return new Map();
+  }
+}
+
+export function getAccountCurrency(account: string): string {
+  const currency = normalizeCurrency(getCashewConfig().accountCurrencies.get(account.trim().toLowerCase()));
+  if (!currency) {
+    throw new CurrencyConversionError(`Set a valid CASHEW_ACCOUNT_CURRENCIES entry for wallet "${account}"`, 500);
+  }
+  return currency;
+}
+
 /**
  * Load and parse Cashew configuration from environment variables
  * 
@@ -151,6 +180,7 @@ export function loadCashewConfig(): CashewConfig {
   }
 
   return {
+    accountCurrencies: parseAccountCurrencies(process.env.CASHEW_ACCOUNT_CURRENCIES),
     accounts: accountsArray,
     categories: categoriesArray,
     subcategories,

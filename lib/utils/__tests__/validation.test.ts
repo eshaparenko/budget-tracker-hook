@@ -17,7 +17,7 @@ describe('Validation Utilities', () => {
     });
 
     it('should reject non-string input', () => {
-      const result = validateAndSanitize(123 as any);
+      const result = validateAndSanitize(123);
       expect(result.isValid).toBe(false);
       expect(result.errors).toContain('Input must be a string');
     });

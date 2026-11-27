@@ -47,11 +47,12 @@ GET | POST /api/webhook/cashew-link
   "success": true,
   "url": "https://cashewapp.web.app/addTransaction?amount=1200&category=%D0%90%D0%B2%D1%82%D0%BE&subcategory=%D0%9F%D0%B0%D0%BB%D0%B8%D0%B2%D0%BE&wallet=Ukrsib&title=WOG",
   "transaction": { "amount": 1200, "category": "Авто", "subcategory": "Паливо", "merchant": "WOG", "currency": "UAH" },
+  "conversion": { "walletAmount": 1200, "walletCurrency": "UAH", "source": "same_currency" },
   "debugLog": []
 }
 ```
 
-`transaction.subcategory` is an empty string (`""`) when there is none. `debugLog` is present only with `debug=true`. Errors: `400` (cannot parse request / invalid body), `401`, `422` (AI failed, or no amount found), `500`.
+`transaction.subcategory` is an empty string (`""`) when there is none. `debugLog` is present only with `debug=true`. Errors include `400` for invalid input, `401` for authentication, `422` for analysis or unusable original currency or amount, `500` for configuration errors, and `502` when a fresh FX quote is unavailable.
 
 ### Example
 
@@ -70,19 +71,19 @@ Sent to Cashew:
 
 | Parameter | Value |
 |---|---|
-| `amount` | Always positive. Income vs expense is decided by the category's polarity inside Cashew. |
+| `amount` | Positive amount in the mapped wallet's currency. Cashew applies the category's income or expense polarity. |
 | `category` | AI choice constrained to `CASHEW_CATEGORIES` (case-insensitive, first item is the fallback). |
 | `subcategory` | Optional. Sent only if the AI's choice is configured under the **final** category in `CASHEW_SUBCATEGORIES` (case-insensitive, configured spelling is used). Otherwise omitted. |
 | `wallet` | Constrained to `CASHEW_ACCOUNTS` (Cashew accepts `account` or `wallet`). |
 | `title` | AI "merchant", max 100 chars. Omitted if empty. |
-| `notes` | AI "details" (e.g. card last digits), max 200 chars. Omitted if empty. |
+| `notes` | Original amount and currency when the amount or currency changes, followed by available details. |
 
 Per the Cashew docs, `subcategory` is the name of the subcategory to add the transaction to. If provided, it overwrites the category when a subcategory with that name is found under a main category. Cashew runs a name search, takes the first entry, and ignores case.
 
 Not sent, on purpose:
 
 - `date`: Cashew defaults to the current date/time on the device that opens the link.
-- `currency`: Cashew has no currency parameter (currency belongs to the account), so the amount is recorded in the account's currency. The JSON response still contains `currency` for information.
+- `currency`: Cashew has no currency parameter (currency belongs to the account), so the amount is recorded in the account's currency. The response reports the original currency in `transaction.currency` and the wallet currency in `conversion.walletCurrency`.
 
 ---
 
@@ -93,6 +94,7 @@ WEBHOOK_SECRET=your_secret
 
 # JSON array of strings. ORDER MATTERS: the first item is the fallback.
 CASHEW_ACCOUNTS=["Ukrsib","Mono","Privat"]
+CASHEW_ACCOUNT_CURRENCIES={"Ukrsib":"UAH","Mono":"UAH","Privat":"UAH"}
 
 # JSON array of strings. The first item is the fallback when the AI's category
 # is not in the list. If empty/unset, categories are not constrained.
@@ -102,11 +104,21 @@ CASHEW_CATEGORIES=["Покупки","Розваги","Транспорт","До�
 CASHEW_SUBCATEGORIES={"Транспорт":["Таксі","Громадський транспорт","Потяги та автобуси"],"Покупки":["Одяг","Електроніка"]}
 ```
 
-- `CASHEW_ACCOUNTS` is a plain array. There is no name-mapping object.
+- Set `CASHEW_ACCOUNT_CURRENCIES` to a JSON object mapping every wallet you use to its ISO 4217 currency. The case-insensitive lookup uses the final wallet after account fallback. If the accounts list is empty and no account is provided, the fallback wallet is `Default`.
 - `CASHEW_CATEGORIES` is an array of **top-level** names only (first item = fallback).
 - Any language works for names, e.g. `["Wells Fargo","Chase"]` or `["Food","Shopping","Other"]`.
 - The config is read once at server start: **restart after editing**.
 - Names must exist in Cashew (name search, case-insensitive). An unknown category makes Cashew show a prompt instead of adding the transaction silently.
+
+### Wallet currency conversion
+
+1. Use an explicit debit or credit amount in the mapped wallet currency when both settlement fields are present.
+2. Otherwise, use the original amount when its currency matches the wallet.
+3. Otherwise, use the latest [Frankfurter v2 reference rate](https://frankfurter.dev/). A reference rate can differ from the bank's final settlement. The NBU-only lookup covered EUR/UAH but did not quote ALL, so the integration uses Frankfurter's default rates, verified for ALL/UAH, EUR/UAH and USD/UAH.
+
+The FX lookup sends only the ISO currency pair, times out after 3 seconds, and caches successful quotes per pair for 15 minutes in each running process. Rate dates must be within five calendar days of the current UTC date, with future dates rejected. The wallet amount is rounded half up to its ISO currency's minor units. A missing currency, invalid wallet configuration, or unavailable FX quote produces an error without a Cashew link.
+
+The response keeps the original `transaction.amount` and `transaction.currency` and adds `conversion` with `walletAmount`, `walletCurrency`, and `source` (`settlement`, `same_currency`, or `fx`). FX responses also include `provider`, `rate`, and `rateDate`.
 
 ### CASHEW_SUBCATEGORIES rules
 
@@ -147,11 +159,11 @@ See `.env.example` for fuller examples.
 
 `/cashew-link` uses a dedicated "direct" prompt (no "is this a transaction?" check). The allowed categories are shown to the model as a JSON tree, e.g. `{"Авто":["Паливо",...],"Інше":[]}`, and it returns `category` (a key) and `subcategory` (a value from **that** category's array, or an empty string). Without `CASHEW_SUBCATEGORIES` the subcategory is always empty, as before. The model:
 
-- ignores balance figures (Залишок/Баланс)
+- separates original and explicitly settled amounts and ignores balances and credit limits (Залишок/Баланс/Ліміт)
 - picks an income category (e.g. Доходи) for money received
 - produces a short title and a short note
 
-`/hook-with-params` keeps its original validation prompt.
+`/hook-with-params` retains its transaction validation step and stores the original values in Sheets.
 
 ---
 
@@ -171,7 +183,7 @@ Request
 [5] Keep the subcategory only if it is configured under the final category
     (otherwise drop it, with a warning in debugLog)
   ↓
-[6] Build the link and return JSON
+[6] Resolve the mapped wallet currency, convert the amount, then build the link and return JSON
 ```
 
 ---
@@ -181,6 +193,7 @@ Request
 - `app/api/webhook/cashew-link/route.ts` - HTTP handler
 - `lib/utils/apiKeyAuth.ts` - `x-api-key` check
 - `lib/services/cashewLinkGenerator.ts` - link building
+- `lib/services/currencyConversion.ts` - settlement selection, FX lookup and wallet rounding
 - `lib/services/cashewConfigLoader.ts` - reads `CASHEW_ACCOUNTS` / `CASHEW_CATEGORIES` / `CASHEW_SUBCATEGORIES`
 - `lib/services/transactionAnalyzer.ts` - `analyzeDirect()`
 - `lib/services/__tests__/` - tests
@@ -189,7 +202,6 @@ Request
 
 ## ⚠️ Known Limitations
 
-- Amount is stored in the Cashew account's currency (no currency conversion).
 - Transaction time is when the link is opened on the device.
 - An unknown `app` silently falls back to the first account.
 - No subcategory fallback: if the AI's subcategory is unknown, belongs to another category, or the category itself fell back to the first item, the subcategory is omitted and the transaction stays in the main category (warning in `debugLog` with `debug=true`).

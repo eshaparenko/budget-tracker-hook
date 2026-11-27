@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { google } from 'googleapis';
+import { TRANSACTION_AMOUNT_RULES } from '@/lib/config/prompts';
 import { guardApiKey } from '@/lib/utils/apiKeyAuth';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
@@ -55,14 +56,18 @@ export async function POST(request: Request) {
             "category": "одна з: ${categories.join(', ')}",
             "amount": число,
             "currency": "валюта (UAH, ALL, EUR тощо)",
+            "settlementAmount": додатне число або 0,
+            "settlementCurrency": "ISO 4217 або порожній рядок",
             "merchant": "назва закладу чи сервісу"
           }
+          ${TRANSACTION_AMOUNT_RULES}
         `;
 
         const result = await model.generateContent(prompt);
         try {
-            parsedData = JSON.parse(result.response.text());
-        } catch (parseError) {
+            const { category, amount, currency, merchant } = JSON.parse(result.response.text());
+            parsedData = { category, amount, currency, merchant };
+        } catch {
             console.error("Помилка парсингу відповіді Gemini:", result.response.text());
             return NextResponse.json({ error: 'Failed to parse AI response' }, { status: 500 });
         }
@@ -104,8 +109,8 @@ export async function GET(request: Request) {
 
         // Фільтруємо тільки ті моделі, які підтримують генерацію тексту (generateContent)
         const availableModels = data.models
-            .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
-            .map((m: any) => m.name);
+            .filter((m: { supportedGenerationMethods?: string[] }) => m.supportedGenerationMethods?.includes('generateContent'))
+            .map((m: { name: string }) => m.name);
 
         return NextResponse.json({
             count: availableModels.length,

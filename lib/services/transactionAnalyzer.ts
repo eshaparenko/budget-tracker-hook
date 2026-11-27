@@ -4,7 +4,6 @@
  */
 
 import { aiFactory } from '@/lib/ai/AIFactory';
-import { AnalysisError as AIAnalysisError } from '@/lib/ai/types';
 import { CategoryOption, ParsedTransaction } from '../types';
 
 export class AnalysisError extends Error {

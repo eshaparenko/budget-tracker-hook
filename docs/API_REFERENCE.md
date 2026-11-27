@@ -44,14 +44,14 @@ POST /api/webhook/cashew-link (query params or request body, same parsing as hoo
 
 | Parameter | Source |
 |-----------|--------|
-| `amount` | Always positive. Income vs expense is decided by the category's polarity inside Cashew |
+| `amount` | Positive amount in the mapped wallet's currency. Cashew applies the category's income or expense polarity |
 | `category` | AI choice constrained to `CASHEW_CATEGORIES` (case-insensitive, first item is the fallback) |
 | `subcategory` | Optional. AI choice, sent only if it is configured under the final category in `CASHEW_SUBCATEGORIES` (case-insensitive, configured spelling is used). No fallback: otherwise omitted |
 | `wallet` | Constrained to `CASHEW_ACCOUNTS` (Cashew accepts `account` or `wallet`) |
 | `title` | AI "merchant", max 100 chars, omitted if empty |
-| `notes` | AI "details" (e.g., card last digits), max 200 chars, omitted if empty |
+| `notes` | Original amount and currency when the amount or currency changes, followed by available details |
 
-Not sent, on purpose: `date` (Cashew uses the current date/time on the device that opens the link) and `currency` (Cashew has no currency parameter; the amount is recorded in the account's currency). The JSON response still contains `currency` for information.
+Not sent, on purpose: `date` (Cashew uses the current date/time on the device that opens the link) and `currency` (Cashew has no currency parameter; the amount is recorded in the account's currency). The response reports the original currency in `transaction.currency` and the wallet currency in `conversion.walletCurrency`.
 
 #### Response (Success)
 
@@ -66,11 +66,20 @@ Not sent, on purpose: `date` (Cashew uses the current date/time on the device th
     "merchant": "WOG",
     "currency": "UAH"
   },
+  "conversion": { "walletAmount": 1200, "walletCurrency": "UAH", "source": "same_currency" },
   "debugLog": [...]                    // Only if debug=true
 }
 ```
 
 `transaction.subcategory` is an empty string (`""`) when there is none, and the link then has no `subcategory` parameter.
+
+`transaction.amount` and `transaction.currency` retain the original transaction values. The link uses `conversion.walletAmount`, rounded half up to the mapped wallet currency's minor units. The `conversion.source` is one of:
+
+| Source | Wallet amount |
+|---|---|
+| `settlement` | Explicit bank debit or credit in the wallet currency |
+| `same_currency` | Original amount in the wallet currency |
+| `fx` | Original amount multiplied by a fresh reference rate. The metadata also includes `provider` (`Frankfurter`), `rate` (wallet units per original unit), and `rateDate` (UTC date, YYYY-MM-DD). |
 
 **Status:** `200 OK`
 
@@ -86,13 +95,16 @@ Not sent, on purpose: `date` (Cashew uses the current date/time on the device th
 | 401 | `Unauthorized` | `x-api-key` missing or wrong |
 | 422 | `Failed to analyze transaction` / `No amount found in the transaction text` | AI failed, or no amount in the text |
 | 500 | `Server configuration error` | `WEBHOOK_SECRET` is not set on the server (fails closed) |
+| 422 | `Unknown transaction currency` or invalid wallet precision | Missing or unsupported original currency, or an amount outside the wallet precision |
+| 500 | `Set a valid CASHEW_ACCOUNT_CURRENCIES entry for wallet "..."` | Missing or invalid currency configuration for the mapped wallet |
 | 500 | `An unexpected error occurred` | Unexpected failure |
+| 502 | `Unable to get a fresh exchange rate for BASE/QUOTE` | No verified FX quote, including unsupported pairs, timeouts, and stale or invalid rates |
 
 401 and the auth-related 500 never include `debugLog`.
 
 #### AI Behaviour
 
-This endpoint uses a dedicated "direct" prompt (no "is this a transaction?" check) and passes the allowed categories as a JSON tree (e.g. `{"Авто":["Паливо",...],"Інше":[]}`). The model returns `category` (a key) and `subcategory` (a value from that category's array, or an empty string). Without `CASHEW_SUBCATEGORIES` the subcategory is always empty. It ignores balance figures (Залишок/Баланс), picks an income category (e.g., Доходи) for money received, and produces a short title and a short note. `/hook-with-params` keeps its original validation prompt.
+This endpoint uses a dedicated "direct" prompt (no "is this a transaction?" check) and passes the allowed categories as a JSON tree (e.g. `{"Авто":["Паливо",...],"Інше":[]}`). The model returns `category` (a key) and `subcategory` (a value from that category's array, or an empty string). Without `CASHEW_SUBCATEGORIES` the subcategory is always empty. It ignores balances and credit limits (Залишок/Баланс/Ліміт), picks an income category (e.g., Доходи) for money received, and produces a short title and a short note. `/hook-with-params` keeps its transaction validation step and continues to store the original amount and currency in Sheets.
 
 #### Example
 
@@ -105,7 +117,6 @@ curl -G "http://localhost:3000/api/webhook/cashew-link" \
 
 #### Known Limitations
 
-- Amount is stored in the Cashew account's currency (no conversion).
 - Transaction time is when the link is opened on the device.
 - An unknown `app` silently falls back to the first account.
 - No subcategory fallback: if the AI's subcategory is unknown, belongs to another category, or the category itself fell back to the first item, the subcategory is omitted and the transaction stays in the main category (warning in `debugLog` with `debug=true`).
@@ -327,6 +338,7 @@ WEBHOOK_SECRET=your_secret
 
 # Cashew accounts: JSON array. Order matters, first item is the fallback
 CASHEW_ACCOUNTS=["Ukrsib","Mono","Privat"]
+CASHEW_ACCOUNT_CURRENCIES={"Ukrsib":"UAH","Mono":"UAH","Privat":"UAH"}
 
 # Cashew categories: JSON array. First item is the fallback; if unset, categories are not constrained
 CASHEW_CATEGORIES=["Покупки","Їжа","Транспорт","Доходи"]
@@ -384,7 +396,8 @@ curl -G "http://yourserver.com/api/webhook/cashew-link" \
 {
   "success": true,
   "url": "https://cashewapp.web.app/addTransaction?amount=405.5&category=...&wallet=Ukrsib&title=Pelham&notes=...",
-  "transaction": { "amount": 405.5, "category": "Покупки", "subcategory": "Одяг", "merchant": "Pelham", "currency": "UAH" }
+  "transaction": { "amount": 405.5, "category": "Покупки", "subcategory": "Одяг", "merchant": "Pelham", "currency": "UAH" },
+  "conversion": { "walletAmount": 405.5, "walletCurrency": "UAH", "source": "same_currency" }
 }
 ```
 

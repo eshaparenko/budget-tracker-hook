@@ -17,6 +17,12 @@ import { CategoryOption } from '../types';
 
 export type PromptType = 'validation' | 'direct';
 
+export const TRANSACTION_AMOUNT_RULES = `- amount and currency describe the original purchase, transfer or refund in the currency in which it was made. Use the unsigned magnitude as a plain positive number. If there is only one transaction amount, use it as the original. Use 0 for a missing amount and an empty string for an unknown currency.
+- Convert explicitly stated currency words or symbols to ISO 4217 codes, e.g. грн → UAH, $ → USD, євро → EUR, лек → ALL.
+- settlementAmount and settlementCurrency describe a second amount only if explicitly charged or credited to the account for this same transaction. Both the amount and its currency must be stated. Use 0 and an empty string when there is no explicit settlement pair. Never infer a settlement or calculate an exchange rate.
+- Ignore balances, available funds and credit limits (e.g. Залишок, Баланс, Bal, Available, Ліміт) for both pairs, even when they appear in the account currency.
+- Example: "Payment 10 EUR, debited 450 UAH, balance 2000 UAH" gives amount 10, currency EUR, settlementAmount 450 and settlementCurrency UAH.`;
+
 export const VALIDATION_PROMPT = `You are a financial transaction analyzer. Your task is to extract structured data from transaction text.
 
 IMPORTANT: Determine if this is a REAL COMPLETED FINANCIAL TRANSACTION or just informational/reference text.
@@ -34,6 +40,8 @@ Extract ONLY the following JSON (no markdown, no code blocks, no extra text):
   "category": "select ONE from: {CATEGORIES}, or empty string if not a transaction",
   "amount": number or 0 if not found (extract numeric value only),
   "currency": "ISO 4217 currency code (UAH, USD, EUR, GBP, ALL, HRK, RUB, etc.) or empty string if not found",
+  "settlementAmount": positive number or 0,
+  "settlementCurrency": "ISO 4217 code or empty string",
   "merchant": "business/service name or empty string",
   "transactionType": "Payment, Transfer, Refund, Withdrawal, Deposit, or Other",
   "details": "any useful info like card/reference or empty string"
@@ -42,9 +50,7 @@ Extract ONLY the following JSON (no markdown, no code blocks, no extra text):
 GUIDELINES:
 - isTransaction = true ONLY if: transaction ALREADY HAPPENED (past tense) - paid, received, transferred, purchased, withdrawn
 - isTransaction = false if: action request (imperative: "Проплати", "Переведи", "Закупи"), pricing info, tariffs, menus, FAQ, rules
-- Extract currency code from ANY format: "5000 лек" → "ALL", "1500 грн" → "UAH", "$500" → "USD"
-- If you see a currency word/symbol, convert it to ISO 4217 code (e.g., лек=ALL, грн=UAH, евро=EUR, долар=USD, дин=RSD, etc.)
-- If amount contains text like "1500 грн", extract ONLY the number: 1500
+${TRANSACTION_AMOUNT_RULES}
 - If no merchant found, return empty string, NOT null
 - category should be one of the provided options (or empty if not a transaction)
 - Do not include any text before or after JSON`;
@@ -54,11 +60,10 @@ GUIDELINES:
  *   category    -> `category`    (looked up by name; income vs expense is derived from the
  *                               category's own polarity, so the choice matters)
  *   subcategory -> `subcategory` (must belong to the chosen category; optional)
- *   amount      -> `amount`      (kept positive; sign comes from the category)
+ *   amount      -> converted to the wallet currency (sign comes from the category)
  *   merchant    -> `title`
  *   details     -> `notes`
- * Cashew has no currency parameter (currency belongs to the account), so currency
- * is extracted for information only.
+ * A separate settlement pair can supply the wallet amount directly.
  */
 export const DIRECT_PROMPT = `You parse bank and payment notifications for the Cashew budgeting app. The notification below describes a transaction that has already happened.
 
@@ -77,14 +82,15 @@ Return ONLY this JSON (no markdown, no code blocks, no extra text):
   "subcategory": "one value from that category's array, or empty string",
   "amount": positive number,
   "currency": "ISO 4217 code or empty string",
+  "settlementAmount": positive number or 0,
+  "settlementCurrency": "ISO 4217 code or empty string",
   "merchant": "short transaction title or empty string",
   "details": "short note or empty string"
 }
 
 RULES:
 - Always extract. Do not judge whether this is a real transaction.
-- amount: the amount of THIS transaction as a plain positive number (no sign, no currency, "." as decimal separator, no thousands separators). Ignore balance and limit figures such as "Залишок", "Баланс", "Bal", "Available". Use 0 if there is no amount.
-- currency: convert any word or symbol to an ISO 4217 code: "грн" → "UAH", "$" → "USD", "евро" → "EUR", "лек" → "ALL". Empty string if unknown.
+${TRANSACTION_AMOUNT_RULES}
 - category: choose by meaning (for example a fuel station belongs to a car or transport category). Cashew derives income or expense from the category, so money RECEIVED (salary, deposit, incoming transfer, refund, cashback) must use an income category when one exists, and money spent must use an expense category.
 - Use an income category ONLY when the text clearly says money was received (for example "Надходження", "Зараховано", "Отримано", "Переказ від <name>", salary, "Повернення коштів", cashback, or an amount with a leading +). If the direction is unclear, assume the money was spent: a wrong income label flips the sign of the transaction.
 - If no category clearly fits (for example a cash withdrawal or a transfer to your own card), use the FIRST category in the list: it is the catch-all. Do not force a weak match.

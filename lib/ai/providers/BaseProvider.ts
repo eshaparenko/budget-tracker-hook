@@ -140,7 +140,7 @@ export abstract class BaseProvider implements IAIProvider {
   /**
    * Normalize and validate transaction data
    */
-  private normalizeTransaction(data: any, promptType: PromptType): ParsedTransaction {
+  private normalizeTransaction(data: Record<string, unknown>, promptType: PromptType): ParsedTransaction {
     const normalized: ParsedTransaction = {
       category: typeof data.category === 'string' ? data.category : 'Інше',
       amount: typeof data.amount === 'number' ? data.amount : 0,
@@ -149,6 +149,15 @@ export abstract class BaseProvider implements IAIProvider {
       transactionType: typeof data.transactionType === 'string' ? data.transactionType : 'Other',
       details: typeof data.details === 'string' ? data.details : '',
     };
+
+    if (
+      typeof data.settlementAmount === 'number' && Number.isFinite(data.settlementAmount)
+      && data.settlementAmount > 0
+      && typeof data.settlementCurrency === 'string' && data.settlementCurrency.trim()
+    ) {
+      normalized.settlementAmount = data.settlementAmount;
+      normalized.settlementCurrency = data.settlementCurrency.trim().toUpperCase();
+    }
 
     // Only the direct prompt asks for a subcategory; keep the validation result unchanged.
     if (promptType === 'direct') {
@@ -160,7 +169,7 @@ export abstract class BaseProvider implements IAIProvider {
     // The direct flow leaves category and subcategory to the caller (Cashew boundary).
     if (
       promptType === 'validation' &&
-      !TRANSACTION_CATEGORIES.includes(normalized.category as any)
+      !TRANSACTION_CATEGORIES.some((category) => category === normalized.category)
     ) {
       normalized.category = 'Інше';
     }

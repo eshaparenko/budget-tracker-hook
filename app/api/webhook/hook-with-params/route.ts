@@ -10,8 +10,8 @@ import { TransactionTypeDetector } from '@/lib/services/transactionTypeDetector'
 import { AmountExtractor } from '@/lib/services/amountExtractor';
 import { SheetsRepository } from '@/lib/repositories/sheetsRepository';
 import { getEnvironmentConfig } from '@/lib/config/environment';
-import { Logger, ErrorMapper, ResponseBuilder, Timer } from '@/lib/utils/errorHandler';
-import { validateAndSanitize, validateTransactionBody } from '@/lib/utils/validation';
+import { Logger, Timer } from '@/lib/utils/errorHandler';
+import { validateTransactionBody } from '@/lib/utils/validation';
 import { Transaction } from '@/lib/types';
 import { guardApiKey } from '@/lib/utils/apiKeyAuth';
 

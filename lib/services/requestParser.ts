@@ -3,7 +3,7 @@
  * Handles extraction and validation of webhook request parameters
  */
 
-import { WebhookRequest, ValidationError } from '../types';
+import { WebhookRequest } from '../types';
 
 const MAX_BODY_LENGTH = 10000; // 10KB limit
 const MAX_APP_LENGTH = 100;
