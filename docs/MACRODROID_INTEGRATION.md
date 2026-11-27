@@ -93,7 +93,8 @@ The endpoint returns JSON:
 ```
 
 **Key fields:**
-- `success` - True if analysis succeeded
+- `success` - True when a Cashew link is available
+- `skipped` - True when an Ukrsib transfer, confirmation request, or card hold was skipped
 - `url` - Cashew app-link (use this to open the app)
 - `transaction.category` - Category chosen from `CASHEW_CATEGORIES`
 - `transaction.subcategory` - Subcategory from `CASHEW_SUBCATEGORIES`, or `""` when none (the link then has no `subcategory` parameter)
@@ -138,11 +139,13 @@ Content: Contains "Оплата" OR "Зарахування"
    Response Variable: {response}
    ```
 
-2. **Check Success**
+2. **Check the response**
    ```
-   IF {response.success} == true
+   IF {response.skipped} == true
+   THEN: Stop the macro
+   ELSE IF {response.success} == true
    THEN: Continue
-   ELSE: Show Toast "Failed to analyze transaction"
+   ELSE: Show Toast "Failed to analyze transaction" and stop the macro
    ```
 
 3. **Extract Cashew Link**

@@ -13,7 +13,7 @@ export interface ValidationResult {
  * Validates and sanitizes string input for security
  */
 export function validateAndSanitize(
-  input: string,
+  input: unknown,
   options: {
     maxLength?: number;
     minLength?: number;

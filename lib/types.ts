@@ -23,8 +23,10 @@ export interface CategoryOption {
 export interface ParsedTransaction {
   category: string;
   subcategory?: string; // Only set by the direct (Cashew) flow; '' = none
-  amount: number;
-  currency: string;
+  amount: number; // Original transaction magnitude
+  currency: string; // Original transaction currency
+  settlementAmount?: number;
+  settlementCurrency?: string;
   merchant: string;
   transactionType?: string; // Payment, Transfer, Refund, etc.
   details?: string; // Additional data: card number, reference, etc.

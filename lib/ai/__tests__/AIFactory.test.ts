@@ -4,9 +4,6 @@
  */
 
 import { AIFactory } from '../AIFactory';
-import { GeminiProvider } from '../providers/GeminiProvider';
-import { ClaudeProvider } from '../providers/ClaudeProvider';
-import { OpenAIProvider } from '../providers/OpenAIProvider';
 
 describe('AIFactory', () => {
   // Save original env vars
@@ -16,7 +13,7 @@ describe('AIFactory', () => {
     // Reset environment
     process.env = { ...originalEnv };
     // Reset factory singleton
-    (AIFactory as any)['instance'] = undefined;
+    Reflect.deleteProperty(AIFactory, 'instance');
   });
 
   afterEach(() => {

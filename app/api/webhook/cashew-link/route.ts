@@ -17,13 +17,17 @@
  * { "success": true,
  *   "url": "https://cashewapp.web.app/addTransaction?...",
  *   "transaction": { "amount", "category", "subcategory", "merchant", "currency" },
+ *   "conversion": { "walletAmount", "walletCurrency", "source" },
  *   "debugLog": [...] }   // only with debug=true
  */
 
 import { NextResponse } from 'next/server';
 import { RequestParser, RequestParserError } from '@/lib/services/requestParser';
 import { TransactionAnalyzer } from '@/lib/services/transactionAnalyzer';
+import { CurrencyConversionError } from '@/lib/services/currencyConversion';
 import { generateCashewLink } from '@/lib/services/cashewLinkGenerator';
+import { mapAccount } from '@/lib/services/accountMapper';
+import { classifyUkrsibNotification } from '@/lib/services/ukrsibNotification';
 import { getCategoryOptions } from '@/lib/services/cashewConfigLoader';
 import { Logger, Timer } from '@/lib/utils/errorHandler';
 import { validateTransactionBody } from '@/lib/utils/validation';
@@ -71,6 +75,19 @@ export async function POST(request: Request) {
       return fail(400, 'Invalid transaction body', validation.errors);
     }
 
+    const notification = mapAccount(app).account.toLowerCase() === 'ukrsib'
+      ? classifyUkrsibNotification(validation.sanitized)
+      : undefined;
+
+    if (notification?.kind === 'skip') {
+      return NextResponse.json({
+        success: false,
+        skipped: true,
+        reason: notification.reason,
+        ...(debugEnabled && { debugLog: [`Skipped Ukrsib notification: ${notification.reason}`] }),
+      });
+    }
+
     // Step 3: analyze with the direct prompt (input is already a notification;
     // the model picks from the user's Cashew categories and their subcategories)
     debugLog.push('→ Analyzing transaction with AI (direct prompt)');
@@ -89,13 +106,23 @@ export async function POST(request: Request) {
       );
     }
 
+    if (notification?.kind === 'payment') {
+      parsed = {
+        ...parsed,
+        amount: notification.amount,
+        currency: notification.currency,
+        settlementAmount: undefined,
+        settlementCurrency: undefined,
+      };
+    }
+
     if (!(parsed.amount > 0)) {
       debugLog.push('❌ No amount found in notification');
       return fail(422, 'No amount found in the transaction text');
     }
 
     // Step 4: build the link (account/category constrained to the Cashew config)
-    const { url, mapping } = generateCashewLink(parsed, { account: app });
+    const { url, mapping, conversion } = await generateCashewLink(parsed, { account: app });
     if (!mapping.accountMatched) {
       debugLog.push(`⚠ Account "${app}" not in CASHEW_ACCOUNTS, using "${mapping.account}"`);
     }
@@ -118,10 +145,12 @@ export async function POST(request: Request) {
         merchant: parsed.merchant,
         currency: parsed.currency,
       },
+      conversion,
       ...(debugEnabled && { debugLog }),
     });
   } catch (error) {
     logger.error('Cashew link generation failed', error);
+    if (error instanceof CurrencyConversionError) return fail(error.status, error.message);
     debugLog.push(`❌ Unexpected error: ${error instanceof Error ? error.message : 'unknown'}`);
     return fail(500, 'An unexpected error occurred');
   }
