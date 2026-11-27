@@ -112,7 +112,22 @@ CASHEW_SUBCATEGORIES={"Транспорт":["Таксі","Громадський
 
 ### Ukrsib notifications
 
-With `app=Ukrsib`, the observed `Oplata:` payment format takes the original amount and currency from `Suma` (including values such as `10.80EUR`). `Dostupno` reports the available balance and is ignored. Transfers (`Perekaz koshtiv:`), confirmation requests (`Для підтвердження операції ...`), and card holds (`Blokuvannia:`) return `skipped: true` with HTTP 200 and no link. Transfers can still be entered manually.
+With `app=Ukrsib`, the observed `Oplata:` payment format takes the original amount and currency from `Suma` (including values such as `10.80EUR`). `Dostupno` reports the available balance and is ignored. Unmapped transfers (`Perekaz koshtiv:`), confirmation requests (`Для підтвердження операції ...`), and card holds (`Blokuvannia:`) return `skipped: true` with HTTP 200 and no link. Transfers can still be entered manually.
+
+### Ukrsib transfers between your own wallets
+
+Set `CASHEW_TRANSFER_ACCOUNTS` to a JSON array of your accounts. Use the last four digits of each IBAN as a string, including any leading zeros. For example:
+
+```json
+[
+  {"bank":"ukrsib","type":"account","last4":"0012","currency":"UAH","wallet":"Ukrsib"},
+  {"bank":"ukrsib","type":"account","last4":"0034","currency":"EUR","wallet":"Ukrsib EUR"}
+]
+```
+
+Use the exact wallet names from Cashew in `CASHEW_ACCOUNTS` and set their currencies in `CASHEW_ACCOUNT_CURRENCIES`. Update the environment and redeploy. Each side must match exactly one entry and the two sides must resolve to different wallets. Missing or ambiguous mappings leave the transfer for manual entry.
+
+The existing MacroDroid URL action opens Cashew’s transfer form with both wallets and both amounts filled in. Review it and save in Cashew. The amounts come directly from the bank notification. Card suffixes do not match account entries. [Cashew transfer app links](https://cashewapp.web.app/assets/docs/automation/app-links.md#add-transfers)
 
 ### Wallet currency conversion
 

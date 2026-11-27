@@ -85,7 +85,9 @@ Not sent, on purpose: `date` (Cashew uses the current date/time on the device th
 
 #### Skipped Ukrsib notifications
 
-For the mapped `Ukrsib` wallet, the webhook returns HTTP 200 with `{"success":false,"skipped":true,"reason":"transfer"}` for `Perekaz koshtiv:`. The other skip reasons are `confirmation` for `Для підтвердження операції ...` and `card_hold` for `Blokuvannia:`. Skipped notifications produce no link and trigger no AI or FX calls.
+For the mapped `Ukrsib` wallet, the webhook returns HTTP 200 with `{"success":false,"skipped":true,"reason":"transfer"}` for an unresolved `Perekaz koshtiv:`. The other skip reasons are `confirmation` for `Для підтвердження операції ...` and `card_hold` for `Blokuvannia:`. Skipped notifications produce no link and trigger no AI or FX calls.
+
+If both accounts resolve unambiguously via `CASHEW_TRANSFER_ACCOUNTS`, the transfer instead returns `success: true`, a review-only `url` to Cashew’s `/addTransferRoute`, and `transfer.from` and `transfer.to` with `wallet`, `amount` and `currency` for each side. No AI or FX calls are made. Clients should open `url` and allow the user to save the draft in Cashew.
 
 For the observed `Oplata:` format, the webhook takes the original amount and currency directly from `Suma`. The `Dostupno` amount is the available balance.
 
