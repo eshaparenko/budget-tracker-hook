@@ -27,6 +27,7 @@ import { TransactionAnalyzer } from '@/lib/services/transactionAnalyzer';
 import { CurrencyConversionError } from '@/lib/services/currencyConversion';
 import { generateCashewLink } from '@/lib/services/cashewLinkGenerator';
 import { mapAccount } from '@/lib/services/accountMapper';
+import { buildUkrsibTransferDraft } from '@/lib/services/cashewTransferLink';
 import { classifyUkrsibNotification } from '@/lib/services/ukrsibNotification';
 import { getCategoryOptions } from '@/lib/services/cashewConfigLoader';
 import { Logger, Timer } from '@/lib/utils/errorHandler';
@@ -75,16 +76,28 @@ export async function POST(request: Request) {
       return fail(400, 'Invalid transaction body', validation.errors);
     }
 
-    const notification = mapAccount(app).account.toLowerCase() === 'ukrsib'
+    const isUkrsib = app.toLowerCase() === 'ukrsib' || mapAccount(app).account.toLowerCase() === 'ukrsib';
+    const notification = isUkrsib
       ? classifyUkrsibNotification(validation.sanitized)
       : undefined;
 
-    if (notification?.kind === 'skip') {
+    if (notification?.kind === 'transfer') {
+      const draft = buildUkrsibTransferDraft(notification.from, notification.to);
+      if (draft) {
+        return NextResponse.json({
+          ...draft,
+          ...(debugEnabled && { debugLog: ['Prepared Ukrsib transfer for review'] }),
+        });
+      }
+    }
+
+    if (notification?.kind === 'skip' || notification?.kind === 'transfer') {
+      const reason = notification.kind === 'transfer' ? 'transfer' : notification.reason;
       return NextResponse.json({
         success: false,
         skipped: true,
-        reason: notification.reason,
-        ...(debugEnabled && { debugLog: [`Skipped Ukrsib notification: ${notification.reason}`] }),
+        reason,
+        ...(debugEnabled && { debugLog: [`Skipped Ukrsib notification: ${reason}`] }),
       });
     }
 

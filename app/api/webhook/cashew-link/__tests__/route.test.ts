@@ -27,6 +27,7 @@ beforeEach(() => {
     CASHEW_CATEGORIES: '["Other","Refunds"]',
     CASHEW_SUBCATEGORIES: '{"Refunds":["Store refund"]}',
   };
+  delete process.env.CASHEW_TRANSFER_ACCOUNTS;
   resetCashewConfig();
   jest.clearAllMocks();
   jest.mocked(TransactionAnalyzer.prototype.getDebugLog).mockReturnValue([]);
@@ -165,4 +166,63 @@ test.each([
   }));
   expect(result.status).toBe(status);
   expect(await result.json()).toEqual({ success: false, error });
+});
+
+describe('Ukrsib internal transfer drafts', () => {
+  const from = { bank: 'ukrsib', type: 'account', last4: '0012', currency: 'UAH', wallet: 'ukrsib' };
+  const to = { bank: 'ukrsib', type: 'account', last4: '0034', currency: 'EUR', wallet: 'Euro wallet' };
+  const message = 'Perekaz koshtiv: 08.11.2026 23:00:20 z rakhunku UA***00000012UAH na sumu 92610.00UAH na rakhunok UA***00000034EUR na sumu 1800,00EUR. Dostupni zalyshky: 62492.72UAH ta 2097.50EUR';
+
+  async function sendTransfer(notification = message) {
+    const fetchQuote = jest.spyOn(globalThis, 'fetch');
+    const url = new URL(endpoint);
+    url.search = new URLSearchParams({ app: 'Ukrsib', body: notification, debug: 'true' }).toString();
+    const result = await GET(new Request(url, { headers: { 'x-api-key': 'test-secret' } }));
+    expect(result.status).toBe(200);
+    expect(analyzeDirect).not.toHaveBeenCalled();
+    expect(fetchQuote).not.toHaveBeenCalled();
+    return result.json();
+  }
+
+  it('opens a Cashew draft with both bank amounts and canonical wallet names', async () => {
+    process.env.CASHEW_TRANSFER_ACCOUNTS = JSON.stringify([from, to]);
+    const body = await sendTransfer();
+    expect(body.success).toBe(true);
+    expect(body.transfer).toEqual({
+      from: { wallet: 'Ukrsib', amount: 92610, currency: 'UAH' },
+      to: { wallet: 'Euro wallet', amount: 1800, currency: 'EUR' },
+    });
+    const url = new URL(body.url);
+    expect(url.origin + url.pathname).toBe('https://cashewapp.web.app/addTransferRoute');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      walletFrom: 'Ukrsib', walletTo: 'Euro wallet', amountFrom: '92610', amountTo: '1800',
+    });
+    expect(JSON.stringify(body)).not.toContain('UA***');
+  });
+
+  it('uses the same draft route for transfers between distinct wallets of the same currency', async () => {
+    process.env.CASHEW_ACCOUNT_CURRENCIES = '{"Ukrsib":"UAH","Euro wallet":"UAH"}';
+    process.env.CASHEW_TRANSFER_ACCOUNTS = JSON.stringify([from, { ...to, currency: 'UAH' }]);
+    const body = await sendTransfer(message.replace('0034EUR na sumu 1800,00EUR', '0034UAH na sumu 92610UAH'));
+    expect(body.transfer.to).toEqual({ wallet: 'Euro wallet', amount: 92610, currency: 'UAH' });
+  });
+
+  it.each([
+    ['unknown destination', [from]],
+    ['duplicate identifier', [from, from, to]],
+    ['card identifier', [from, { ...to, type: 'card' }]],
+    ['wallet currency mismatch', [from, { ...to, wallet: 'Ukrsib' }]],
+    ['invalid JSON', '{broken'],
+  ])('leaves %s for manual entry', async (_description, entries) => {
+    process.env.CASHEW_TRANSFER_ACCOUNTS = typeof entries === 'string' ? entries : JSON.stringify(entries);
+    const body = await sendTransfer();
+    expect(body).toMatchObject({ success: false, skipped: true, reason: 'transfer' });
+    expect(body).not.toHaveProperty('url');
+  });
+
+  it('rejects a transfer with conflicting account and amount currencies', async () => {
+    process.env.CASHEW_TRANSFER_ACCOUNTS = JSON.stringify([from, to]);
+    const body = await sendTransfer(message.replace('1800,00EUR', '1800,00USD'));
+    expect(body).toMatchObject({ success: false, skipped: true, reason: 'transfer' });
+  });
 });

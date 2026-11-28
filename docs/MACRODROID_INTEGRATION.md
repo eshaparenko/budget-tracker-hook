@@ -94,7 +94,7 @@ The endpoint returns JSON:
 
 **Key fields:**
 - `success` - True when a Cashew link is available
-- `skipped` - True when an Ukrsib transfer, confirmation request, or card hold was skipped
+- `skipped` - True when an unresolved Ukrsib transfer, confirmation request, or card hold was skipped
 - `url` - Cashew app-link (use this to open the app)
 - `transaction.category` - Category chosen from `CASHEW_CATEGORIES`
 - `transaction.subcategory` - Subcategory from `CASHEW_SUBCATEGORIES`, or `""` when none (the link then has no `subcategory` parameter)
@@ -156,6 +156,7 @@ Content: Contains "Оплата" OR "Зарахування"
 4. **Open Cashew**
    ```
    Open URL: {cashew_url}
+   For a mapped Ukrsib transfer, review and save the prefilled transfer in Cashew.
    ```
 
 ---
